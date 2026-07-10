@@ -16,7 +16,7 @@
 
 ## Frontend foundation conventions
 
-- Use TypeScript, Expo Router, NativeWind/shared design tokens, and small reusable components. Keep route files, reusable UI, finance components, constants/mock data, utilities, and types clearly separated.
+- Use TypeScript, Expo Router, NativeWind/shared design tokens, and small reusable components. Keep route files, reusable UI, finance components, constants, utilities, and types clearly separated.
 - Product name: `Dinary`; repository slug: `dinary`; assistant name: `Hsebli`; currency: `TND`; default locale: Tunisia.
 - Implement light mode only for now, while keeping tokens extensible for future dark mode. Follow the palette and component guidance in `docs/frontend-foundation.md`.
 - Build the screens and routes required by the brief: home (`/`), transactions (`/transactions`), add transaction (`/add-transaction`), salary (`/salary`), and assistant (`/assistant`). Voice and assistant controls are static placeholders in this phase.

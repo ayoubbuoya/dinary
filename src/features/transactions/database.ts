@@ -1,7 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
-import { mockTransactions } from '@/constants/mock-data';
 
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 
 export async function migrateDbIfNeeded(db: SQLiteDatabase) {
   const result = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
@@ -60,16 +59,12 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
       'cash', 'Cash', 'cash', 0, now, now,
     );
 
-    for (const transaction of mockTransactions) {
-      await db.runAsync(
-        `INSERT OR IGNORE INTO transactions (id, account_id, type, amount_millimes, category, title, note, occurred_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        transaction.id, 'cash', transaction.type, transaction.amountMillimes, transaction.category,
-        transaction.title, transaction.note ?? null, transaction.occurredAt, transaction.occurredAt, transaction.occurredAt,
-      );
-    }
-
     currentVersion = 1;
+  }
+
+  if (currentVersion === 1) {
+    await db.runAsync('DELETE FROM transactions WHERE id IN (?, ?, ?, ?, ?, ?)', 'txn_001', 'txn_002', 'txn_003', 'txn_004', 'txn_005', 'txn_006');
+    currentVersion = 2;
   }
 
   await db.execAsync(`PRAGMA user_version = ${currentVersion}`);
