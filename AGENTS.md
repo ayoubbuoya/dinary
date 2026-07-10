@@ -3,7 +3,7 @@
 ## Source of truth
 
 - Read `docs/frontend-foundation.md` before frontend work and `docs/product-spec.md` before work that touches product behavior, data, privacy, voice, AI, sync, or financial calculations.
-- The current implementation phase is the **frontend foundation**: build a polished static app shell with mock data only. Do not add Supabase, authentication, persistence, sync, real voice recording/transcription, or AI-model execution unless the task explicitly moves the project beyond this phase.
+- The current implementation phase is a **local SQLite app**: persist product data on-device with Expo SQLite. Do not add Supabase, authentication, cloud databases, remote backup/sync, real voice recording/transcription, or AI-model execution unless the task explicitly moves the project beyond this phase.
 - Preserve the existing Expo project. Do not re-initialize it or move Expo Router routes solely to match a suggested directory tree.
 
 ## Expo SDK 57
@@ -30,9 +30,11 @@
 - Use the device timezone when assigning transactions to reporting months. Expected recurring income affects forecasts only; it must not affect actual balance until confirmed.
 - Any future voice or assistant-created transaction must be a reviewable draft. Missing amount/type or low-confidence fields block confirmation; AI must never directly mutate financial records.
 
-## Future data, privacy, and security work
+## Local data, privacy, and security work
 
-- The local database is the operational source of truth; cloud sync is authenticated backup/multi-device synchronization and must not block normal offline use.
+- Expo SQLite is the sole operational source of truth for now. Do not add any remote database, backend, cloud backup, synchronization, authentication, or network-dependent data flow unless the user explicitly changes this local-only policy.
+- Local export and backup files are user-initiated and must remain on-device until the user explicitly chooses a destination through the operating-system share sheet.
+- Any future cloud sync is authenticated backup/multi-device synchronization and must not block normal offline use.
 - Never ship a Supabase service-role key. Every client-exposed user-owned cloud table requires Row Level Security based on `auth.uid() = user_id`; do not trust an app-supplied user ID alone.
 - Store sessions in secure device storage, request microphone permission only after the user starts voice entry, and do not upload raw audio or transcripts by default.
 - Keep AI grounded in typed, bounded, read-only analytics facts. Calculations belong in code/queries; the model may explain them but must not invent figures or provide regulated financial advice.

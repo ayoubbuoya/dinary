@@ -1,4 +1,7 @@
 const { getDefaultConfig } = require('expo/metro-config');
 const { withNativeWind } = require('nativewind/metro');
 
-module.exports = withNativeWind(getDefaultConfig(__dirname), { input: './src/global.css' });
+const config = getDefaultConfig(__dirname);
+config.resolver.assetExts.push('wasm');
+
+module.exports = withNativeWind(config, { input: './src/global.css' });
