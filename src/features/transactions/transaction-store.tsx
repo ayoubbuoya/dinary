@@ -31,6 +31,8 @@ type TransactionStore = {
   monthExpenseMillimes: number;
   isLoading: boolean;
   addTransaction: (transaction: NewTransaction) => Promise<void>;
+  updateTransaction: (id: string, transaction: NewTransaction) => Promise<void>;
+  deleteTransaction: (id: string) => Promise<void>;
   exportCsv: () => Promise<void>;
   backupData: () => Promise<void>;
 };
@@ -86,6 +88,28 @@ export function TransactionProvider({ children }: PropsWithChildren) {
     setTransactions((current) => [record, ...current]);
   }, [db]);
 
+  const updateTransaction = useCallback(async (id: string, transaction: NewTransaction) => {
+    const category = categoryFor(transaction.category);
+    const title = transaction.type === 'income' && transaction.category === 'salary' ? 'Monthly salary' : category.label;
+    const updatedAt = new Date().toISOString();
+    const result = await db.runAsync(
+      `UPDATE transactions
+       SET type = ?, amount_millimes = ?, category = ?, title = ?, note = ?, occurred_at = ?, updated_at = ?
+       WHERE id = ? AND status = 'confirmed'`,
+      transaction.type, transaction.amountMillimes, transaction.category, title, transaction.note?.trim() || null,
+      transaction.occurredAt, updatedAt, id,
+    );
+    if (result.changes !== 1) throw new Error('This transaction could not be updated.');
+
+    setTransactions((current) => current.map((record) => record.id === id ? { ...record, type: transaction.type, amountMillimes: transaction.amountMillimes, category: transaction.category, title, note: transaction.note?.trim() || undefined, occurredAt: transaction.occurredAt } : record).sort((first, second) => new Date(second.occurredAt).getTime() - new Date(first.occurredAt).getTime()));
+  }, [db]);
+
+  const deleteTransaction = useCallback(async (id: string) => {
+    const result = await db.runAsync("UPDATE transactions SET status = 'voided', updated_at = ? WHERE id = ? AND status = 'confirmed'", new Date().toISOString(), id);
+    if (result.changes !== 1) throw new Error('This transaction could not be deleted.');
+    setTransactions((current) => current.filter((record) => record.id !== id));
+  }, [db]);
+
   const value = useMemo<TransactionStore>(() => {
     const confirmedTransactions = transactions.filter((transaction) => transaction.type !== 'transfer');
     const balanceMillimes = confirmedTransactions.reduce((total, transaction) => total + (transaction.type === 'income' ? transaction.amountMillimes : -transaction.amountMillimes), 0);
@@ -99,10 +123,12 @@ export function TransactionProvider({ children }: PropsWithChildren) {
       monthExpenseMillimes: currentMonthTransactions.filter((transaction) => transaction.type === 'expense').reduce((total, transaction) => total + transaction.amountMillimes, 0),
       isLoading,
       addTransaction,
+      updateTransaction,
+      deleteTransaction,
       exportCsv: () => exportTransactionsCsv(transactions),
       backupData: async () => createBackup(await getBackupSnapshot(db)),
     };
-  }, [addTransaction, db, isLoading, transactions]);
+  }, [addTransaction, db, deleteTransaction, isLoading, transactions, updateTransaction]);
 
   return <TransactionContext.Provider value={value}>{children}</TransactionContext.Provider>;
 }
