@@ -1,0 +1,7 @@
+import { StyleSheet, View } from 'react-native';
+import { Card } from '@/components/ui/Card';
+import { Text } from '@/components/ui/Text';
+import { Amount } from './Amount';
+import { colors } from '@/constants/colors';
+export function BalanceCard({ balanceMillimes, incomeMillimes, expenseMillimes }: { balanceMillimes: number; incomeMillimes: number; expenseMillimes: number }) { return <Card variant="elevated" style={styles.card}><Text variant="label" style={styles.label}>AVAILABLE BALANCE</Text><Amount millimes={balanceMillimes} size="large" /><View style={styles.divider} /><View style={styles.summary}><View><Text variant="caption" style={styles.summaryLabel}>Income</Text><Amount millimes={incomeMillimes} type="income" /></View><View><Text variant="caption" style={styles.summaryLabel}>Spent</Text><Amount millimes={expenseMillimes} type="expense" /></View></View><Text variant="caption" style={styles.hint}>You spent 22% of your monthly income.</Text></Card>; }
+const styles = StyleSheet.create({ card: { gap: 10 }, label: { color: colors.primary }, divider: { height: 1, backgroundColor: colors.border, marginVertical: 4 }, summary: { flexDirection: 'row', gap: 38 }, summaryLabel: { marginBottom: 2 }, hint: { marginTop: 2, color: colors.textMuted } });

@@ -1,98 +1,16 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import { ArrowRight, Bot, CirclePlus, ReceiptText, WalletCards } from 'lucide-react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { BalanceCard } from '@/components/finance/BalanceCard';
+import { MonthSummaryCard } from '@/components/finance/MonthSummaryCard';
+import { TransactionItem } from '@/components/finance/TransactionItem';
+import { VoiceButton } from '@/components/finance/VoiceButton';
+import { Screen } from '@/components/layout/Screen';
+import { Card } from '@/components/ui/Card';
+import { Text } from '@/components/ui/Text';
+import { mockBalanceMillimes, mockTransactions, monthExpenseMillimes, monthIncomeMillimes } from '@/constants/mock-data';
+import { colors, radius } from '@/constants/colors';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
-
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
-    );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
-  return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
-  );
-}
-
-export default function HomeScreen() {
-  return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
-
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
-
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
-
-        {Platform.OS === 'web' && <WebBadge />}
-      </SafeAreaView>
-    </ThemedView>
-  );
-}
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    flexDirection: 'row',
-  },
-  safeArea: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
-  },
-  heroSection: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
-  },
-  title: {
-    textAlign: 'center',
-  },
-  code: {
-    textTransform: 'uppercase',
-  },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
-  },
-});
+export default function HomeScreen() { const router = useRouter(); return <Screen><View style={styles.header}><View><Text variant="caption">Friday, July 10</Text><Text variant="title">Dinary</Text></View><View style={styles.avatar}><Text style={styles.avatarText}>A</Text></View></View><View style={styles.intro}><Text variant="subtitle">Win yemchi dinarek?</Text><Text variant="caption">Your July money overview</Text></View><BalanceCard balanceMillimes={mockBalanceMillimes} incomeMillimes={monthIncomeMillimes} expenseMillimes={monthExpenseMillimes} /><View style={styles.actions}><QuickAction label="Expense" Icon={CirclePlus} onPress={() => router.navigate('/add-transaction')} /><QuickAction label="Income" Icon={WalletCards} onPress={() => router.navigate('/add-transaction')} /><QuickAction label="Hsebli" Icon={Bot} onPress={() => router.navigate('/assistant')} /><VoiceButton compact onPress={() => router.navigate('/add-transaction')} /></View><View style={styles.sectionHeader}><Text variant="subtitle">This month</Text></View><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryScroll}><MonthSummaryCard eyebrow="TOP CATEGORY" title="Food" detail="126.000 TND spent" /><MonthSummaryCard eyebrow="NEXT SALARY" title="24 days" detail="Expected on August 3" /></ScrollView><View style={styles.sectionHeader}><Text variant="subtitle">Recent activity</Text><Pressable onPress={() => router.navigate('/transactions')} style={styles.viewAll}><Text style={styles.viewAllText}>See all</Text><ArrowRight size={16} color={colors.primary} /></Pressable></View><Card variant="default" style={styles.transactions}>{mockTransactions.slice(0, 3).map((transaction, index) => <View key={transaction.id}>{index > 0 && <View style={styles.line} />}<TransactionItem transaction={transaction} /></View>)}</Card><Card variant="muted" style={styles.insight}><ReceiptText size={22} color={colors.accent} /><View style={styles.insightText}><Text style={styles.insightTitle}>A small insight</Text><Text variant="caption">Food is your biggest category this month. You spent 126.000 TND so far.</Text></View></Card></Screen>; }
+function QuickAction({ label, Icon, onPress }: { label: string; Icon: typeof CirclePlus; onPress: () => void }) { return <Pressable accessibilityRole="button" accessibilityLabel={`Add ${label}`} onPress={onPress} style={({ pressed }) => [styles.quick, pressed && styles.pressed]}><Icon size={21} color={colors.primary} /><Text variant="caption" style={styles.quickLabel}>{label}</Text></Pressable>; }
+const styles = StyleSheet.create({ header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primarySoft }, avatarText: { color: colors.primary, fontWeight: '800' }, intro: { gap: 2 }, actions: { flexDirection: 'row', gap: 9 }, quick: { flex: 1, minHeight: 56, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center', gap: 3, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }, quickLabel: { fontSize: 11, color: colors.primary, fontWeight: '700' }, pressed: { opacity: .7 }, sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, viewAll: { flexDirection: 'row', alignItems: 'center', gap: 3 }, viewAllText: { color: colors.primary, fontWeight: '700' }, summaryScroll: { gap: 12, paddingRight: 20 }, transactions: { paddingVertical: 3 }, line: { height: 1, backgroundColor: colors.border, marginLeft: 54 }, insight: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' }, insightText: { flex: 1, gap: 3 }, insightTitle: { fontWeight: '800' } });

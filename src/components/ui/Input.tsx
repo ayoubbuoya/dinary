@@ -1,0 +1,6 @@
+import type { ComponentProps } from 'react';
+import { StyleSheet, TextInput, View } from 'react-native';
+import { colors, radius } from '@/constants/colors';
+import { Text } from './Text';
+export function Input({ label, error, prefix, style, ...props }: ComponentProps<typeof TextInput> & { label: string; error?: string; prefix?: string }) { return <View style={styles.group}><Text variant="label">{label}</Text><View style={[styles.field, error && styles.error]}>{prefix && <Text style={styles.prefix}>{prefix}</Text>}<TextInput accessibilityLabel={label} placeholderTextColor={colors.textSoft} style={[styles.input, style]} {...props} /></View>{error && <Text variant="caption" style={styles.errorText}>{error}</Text>}</View>; }
+const styles = StyleSheet.create({ group: { gap: 7 }, field: { minHeight: 52, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, borderRadius: radius.sm, paddingHorizontal: 14 }, input: { flex: 1, color: colors.text, fontSize: 16, paddingVertical: 10 }, prefix: { marginRight: 8, fontWeight: '700', color: colors.primary }, error: { borderColor: colors.expense }, errorText: { color: colors.expense } });

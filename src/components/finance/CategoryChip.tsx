@@ -1,0 +1,5 @@
+import { Pressable, StyleSheet } from 'react-native';
+import { colors, radius } from '@/constants/colors';
+import { Text } from '@/components/ui/Text';
+export function CategoryChip({ label, emoji, selected, onPress }: { label: string; emoji?: string; selected?: boolean; onPress?: () => void }) { return <Pressable accessibilityRole="button" accessibilityState={{ selected }} onPress={onPress} style={({ pressed }) => [styles.chip, selected && styles.selected, pressed && styles.pressed]}><Text style={[styles.text, selected && styles.selectedText]}>{emoji ? `${emoji} ${label}` : label}</Text></Pressable>; }
+const styles = StyleSheet.create({ chip: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 13, minHeight: 38, borderRadius: radius.pill, justifyContent: 'center' }, selected: { backgroundColor: colors.primary, borderColor: colors.primary }, text: { fontSize: 14, fontWeight: '600' }, selectedText: { color: colors.white }, pressed: { opacity: .75 } });
