@@ -11,6 +11,7 @@ type NewTransaction = {
   amountMillimes: number;
   category: TransactionCategory;
   note?: string;
+  occurredAt: string;
 };
 
 type TransactionRow = {
@@ -73,7 +74,7 @@ export function TransactionProvider({ children }: PropsWithChildren) {
       category: transaction.category,
       title: transaction.type === 'income' && transaction.category === 'salary' ? 'Monthly salary' : category.label,
       note: transaction.note?.trim() || undefined,
-      occurredAt: now,
+      occurredAt: transaction.occurredAt,
     };
 
     await db.runAsync(
