@@ -8,7 +8,11 @@
     "scheme": "dinary",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/expo.icon",
+      "infoPlist": {
+        "NSSpeechRecognitionUsageDescription": "Allow Dinary to transcribe a voice transaction on this device.",
+        "NSMicrophoneUsageDescription": "Allow Dinary to use your microphone for voice transaction entry."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -17,7 +21,11 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ],
+      "package": "com.ayoubamer.dinary"
     },
     "web": {
       "output": "static",
@@ -50,6 +58,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "34df5edf-c7ce-46b0-9ef7-a03f21dbb86d"
+      }
     }
   }
 }
