@@ -89,9 +89,12 @@ type TransactionStore = {
   confirmSalaryPayment: (salaryRule: RecurringRule, confirmedDate?: Date) => Promise<void>;
   setCategoryBudget: (category: TransactionCategory, amountMillimes: number, monthKey?: string) => Promise<void>;
   deleteCategoryBudget: (id: string) => Promise<void>;
+  updateAccountOpeningBalance: (accountId: string, openingBalanceMillimes: number) => Promise<void>;
   exportCsv: () => Promise<void>;
   backupData: () => Promise<void>;
 };
+
+
 
 
 
@@ -435,6 +438,17 @@ export function TransactionProvider({ children }: PropsWithChildren) {
     setCategoryBudgets((current) => current.filter((b) => b.id !== id));
   }, [db]);
 
+  const updateAccountOpeningBalance = useCallback(async (accountId: string, openingBalanceMillimes: number) => {
+    const now = new Date().toISOString();
+    await db.runAsync(
+      'UPDATE accounts SET opening_balance_millimes = ?, updated_at = ? WHERE id = ?',
+      openingBalanceMillimes, now, accountId,
+    );
+    setAccounts((current) =>
+      current.map((acc) => (acc.id === accountId ? { ...acc, openingBalanceMillimes } : acc)),
+    );
+  }, [db]);
+
   const salaryRule = useMemo(() => {
     return recurringRules.find((r) => r.type === 'income' && r.isActive);
   }, [recurringRules]);
@@ -483,10 +497,12 @@ export function TransactionProvider({ children }: PropsWithChildren) {
       confirmSalaryPayment,
       setCategoryBudget,
       deleteCategoryBudget,
+      updateAccountOpeningBalance,
       exportCsv: () => exportTransactionsCsv(transactions),
       backupData: async () => createBackup(await getBackupSnapshot(db)),
     };
-  }, [accounts, addTransaction, addTransfer, categoryBudgets, confirmSalaryPayment, db, deleteCategoryBudget, deleteSalaryRule, deleteTransaction, isLoading, recurringRules, salaryRule, saveSalaryRule, setCategoryBudget, transactions, updateTransaction]);
+  }, [accounts, addTransaction, addTransfer, categoryBudgets, confirmSalaryPayment, db, deleteCategoryBudget, deleteSalaryRule, deleteTransaction, isLoading, recurringRules, salaryRule, saveSalaryRule, setCategoryBudget, transactions, updateAccountOpeningBalance, updateTransaction]);
+
 
 
   return <TransactionContext.Provider value={value}>{children}</TransactionContext.Provider>;

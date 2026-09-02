@@ -1,14 +1,18 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useRouter } from 'expo-router';
-import { ArrowLeftRight, ArrowRight, Bot, CirclePlus, ReceiptText, WalletCards } from 'lucide-react-native';
+import { ArrowLeftRight, ArrowRight, Bot, CirclePlus, ReceiptText, SlidersHorizontal, WalletCards } from 'lucide-react-native';
 import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { BalanceCard } from '@/components/finance/BalanceCard';
 import { MonthSummaryCard } from '@/components/finance/MonthSummaryCard';
 import { TransactionItem } from '@/components/finance/TransactionItem';
 import { AccountPill } from '@/components/finance/AccountPill';
+import { AccountBalanceModal } from '@/components/finance/AccountBalanceModal';
 import { QuickExpenseBar, type QuickFavorite } from '@/components/finance/QuickExpenseBar';
 import { PaydayBanner } from '@/components/finance/PaydayBanner';
 import { SafeToSpendCard } from '@/components/finance/SafeToSpendCard';
+import { SpendingCategoryChart } from '@/components/finance/SpendingCategoryChart';
+import { DailySpendingHistogram } from '@/components/finance/DailySpendingHistogram';
+import { MonthHealthCard } from '@/components/finance/MonthHealthCard';
 import { Screen } from '@/components/layout/Screen';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -18,6 +22,7 @@ import { colors, radius } from '@/constants/colors';
 import { getLocalMonthKey, formatMonthYear, formatToday } from '@/lib/date';
 import { formatMoney } from '@/lib/format-money';
 import { useTransactions } from '@/features/transactions/transaction-store';
+import { extractFinancialFacts } from '@/lib/financial-facts';
 import { calculateSafeDailySpend, getDaysUntilPayday, isPaydayDueForConfirmation } from '@/lib/salary';
 
 export default function HomeScreen() {
@@ -30,12 +35,15 @@ export default function HomeScreen() {
     accounts,
     accountBalances,
     salaryRule,
+    categoryBudgets,
     confirmSalaryPayment,
+    updateAccountOpeningBalance,
     isLoading,
   } = useTransactions();
 
   const [isPaydayDismissed, setIsPaydayDismissed] = useState(false);
   const [isConfirmingSalary, setIsConfirmingSalary] = useState(false);
+  const [isBalanceModalOpen, setIsBalanceModalOpen] = useState(false);
 
   const now = new Date();
   const currentMonthExpenses = transactions.filter(
@@ -56,7 +64,17 @@ export default function HomeScreen() {
   const isPaydayDue = isPaydayDueForConfirmation(salaryRule, transactions, now);
   const safeSpendMetrics = salaryRule ? calculateSafeDailySpend(balanceMillimes, daysUntilPayday) : undefined;
 
-  const handleSelectFavorite = (favorite: QuickFavorite) => {
+  // Extracted comprehensive financial facts for charts
+  const facts = extractFinancialFacts(
+    transactions,
+    accounts,
+    accountBalances,
+    salaryRule,
+    categoryBudgets,
+    now,
+  );
+
+  const handleSelectFavorite = useCallback((favorite: QuickFavorite) => {
     router.navigate({
       pathname: '/add-transaction',
       params: {
@@ -66,9 +84,9 @@ export default function HomeScreen() {
         note: favorite.label,
       },
     });
-  };
+  }, [router]);
 
-  const handleConfirmSalary = async () => {
+  const handleConfirmSalary = useCallback(async () => {
     if (!salaryRule) return;
     setIsConfirmingSalary(true);
     try {
@@ -82,7 +100,14 @@ export default function HomeScreen() {
     } finally {
       setIsConfirmingSalary(false);
     }
-  };
+  }, [confirmSalaryPayment, salaryRule]);
+
+  const handleSaveStartingBalances = useCallback(async (balances: Record<string, number>) => {
+    for (const [accId, millimes] of Object.entries(balances)) {
+      await updateAccountOpeningBalance(accId, millimes);
+    }
+    Alert.alert('Balances Updated', 'Your starting account balances have been saved.');
+  }, [updateAccountOpeningBalance]);
 
   return (
     <Screen>
@@ -125,10 +150,19 @@ export default function HomeScreen() {
         onPressConfigure={() => router.navigate('/salary')}
       />
 
-      {/* Accounts Breakdown */}
+      {/* Accounts Breakdown with Starting Balance Adjuster */}
       <View style={styles.accountsSection}>
         <View style={styles.accountsHeader}>
           <Text variant="label">YOUR ACCOUNTS</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Adjust starting account balances"
+            onPress={() => setIsBalanceModalOpen(true)}
+            style={styles.adjustBtn}
+          >
+            <SlidersHorizontal size={13} color={colors.primaryDark} />
+            <Text style={styles.adjustBtnText}>Starting balances</Text>
+          </Pressable>
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.accountsScroll}>
           {accounts.map((acc) => (
@@ -142,6 +176,16 @@ export default function HomeScreen() {
         </ScrollView>
       </View>
 
+      {/* Account Starting Balance Modal */}
+      {isBalanceModalOpen && (
+        <AccountBalanceModal
+          visible={isBalanceModalOpen}
+          accounts={accounts}
+          onClose={() => setIsBalanceModalOpen(false)}
+          onSave={handleSaveStartingBalances}
+        />
+      )}
+
       {/* Quick Actions */}
       <View style={styles.actions}>
         <QuickAction label="Expense" Icon={CirclePlus} onPress={() => router.navigate({ pathname: '/add-transaction', params: { type: 'expense' } })} />
@@ -152,6 +196,27 @@ export default function HomeScreen() {
 
       {/* 1-Tap Daily Expense Shortcuts */}
       <QuickExpenseBar onSelectFavorite={handleSelectFavorite} />
+
+      {/* Visual Spending Analytics Section */}
+      <View style={styles.sectionHeader}>
+        <Text variant="subtitle">Spending Analytics</Text>
+      </View>
+
+      {/* Monthly Cashflow & Savings Health Card */}
+      <MonthHealthCard facts={facts} />
+
+      {/* Category Proportional Distribution Chart */}
+      <SpendingCategoryChart
+        categories={facts.sortedCategories}
+        totalExpenseMillimes={facts.thisMonthExpenseMillimes}
+      />
+
+      {/* Daily Spending Rhythm Histogram */}
+      <DailySpendingHistogram
+        transactions={transactions}
+        safeDailyRateMillimes={facts.safeDailySpendRateMillimes}
+        referenceDate={now}
+      />
 
       {/* This Month Analytics Carousel */}
       <View style={styles.sectionHeader}>
@@ -242,6 +307,8 @@ const styles = StyleSheet.create({
   intro: { gap: 2 },
   accountsSection: { gap: 8 },
   accountsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  adjustBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill, backgroundColor: colors.primarySoft },
+  adjustBtnText: { fontSize: 11, fontWeight: '700', color: colors.primaryDark },
   accountsScroll: { gap: 10, paddingRight: 16 },
   actions: { flexDirection: 'row', gap: 8 },
   quick: { flex: 1, minHeight: 56, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center', gap: 3, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
@@ -257,4 +324,5 @@ const styles = StyleSheet.create({
   insightText: { flex: 1, gap: 3 },
   insightTitle: { fontWeight: '800' },
 });
+
 
