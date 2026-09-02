@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 2;
+const DATABASE_VERSION = 3;
 
 export async function migrateDbIfNeeded(db: SQLiteDatabase) {
   const result = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
@@ -31,6 +31,7 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
         category TEXT NOT NULL,
         title TEXT NOT NULL,
         note TEXT,
+        transfer_group_id TEXT,
         occurred_at TEXT NOT NULL,
         source TEXT NOT NULL DEFAULT 'manual',
         status TEXT NOT NULL DEFAULT 'confirmed',
@@ -56,7 +57,7 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
     const now = new Date().toISOString();
     await db.runAsync(
       'INSERT OR IGNORE INTO accounts (id, name, type, opening_balance_millimes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-      'cash', 'Cash', 'cash', 0, now, now,
+      'cash', 'Cash (Espèces)', 'cash', 0, now, now,
     );
 
     currentVersion = 1;
@@ -65,6 +66,31 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
   if (currentVersion === 1) {
     await db.runAsync('DELETE FROM transactions WHERE id IN (?, ?, ?, ?, ?, ?)', 'txn_001', 'txn_002', 'txn_003', 'txn_004', 'txn_005', 'txn_006');
     currentVersion = 2;
+  }
+
+  if (currentVersion === 2) {
+    // Add transfer_group_id column to transactions if it doesn't exist
+    const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(transactions)');
+    const hasTransferGroup = columns.some((col) => col.name === 'transfer_group_id');
+    if (!hasTransferGroup) {
+      await db.execAsync('ALTER TABLE transactions ADD COLUMN transfer_group_id TEXT');
+    }
+
+    const now = new Date().toISOString();
+    await db.runAsync(
+      'INSERT OR IGNORE INTO accounts (id, name, type, opening_balance_millimes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+      'bank_card', 'Bank Card (Carte)', 'bank_card', 0, now, now,
+    );
+    await db.runAsync(
+      'INSERT OR IGNORE INTO accounts (id, name, type, opening_balance_millimes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+      'e_dinar', 'e-Dinar / D17', 'e_wallet', 0, now, now,
+    );
+    await db.runAsync(
+      'INSERT OR IGNORE INTO accounts (id, name, type, opening_balance_millimes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+      'flouci', 'Flouci Wallet', 'e_wallet', 0, now, now,
+    );
+
+    currentVersion = 3;
   }
 
   await db.execAsync(`PRAGMA user_version = ${currentVersion}`);

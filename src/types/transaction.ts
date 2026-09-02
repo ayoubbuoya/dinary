@@ -3,10 +3,15 @@ export type TransactionCategory = 'food' | 'groceries' | 'transport' | 'coffee' 
 
 export type Transaction = {
   id: string;
+  accountId: string;
   type: TransactionType;
   amountMillimes: number;
   category: TransactionCategory;
   title: string;
   note?: string;
+  source?: string;
+  transferGroupId?: string;
   occurredAt: string;
 };
+
+
