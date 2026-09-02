@@ -8,6 +8,7 @@ import { getBackupSnapshot } from '@/features/transactions/database';
 import type { Transaction, TransactionCategory, TransactionType } from '@/types/transaction';
 import type { Account, AccountType } from '@/types/account';
 import type { RecurringRule, SalaryRuleInput } from '@/types/recurring';
+import type { CategoryBudget } from '@/types/budget';
 
 export type NewTransaction = {
   accountId?: string;
@@ -59,11 +60,21 @@ type RecurringRow = {
   updated_at: string;
 };
 
+type CategoryBudgetRow = {
+  id: string;
+  category: TransactionCategory;
+  amount_millimes: number;
+  month_key: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type TransactionStore = {
   transactions: Transaction[];
   accounts: Account[];
   accountBalances: Record<string, number>;
   recurringRules: RecurringRule[];
+  categoryBudgets: CategoryBudget[];
   salaryRule?: RecurringRule;
   balanceMillimes: number;
   monthIncomeMillimes: number;
@@ -76,9 +87,12 @@ type TransactionStore = {
   saveSalaryRule: (input: SalaryRuleInput) => Promise<void>;
   deleteSalaryRule: (id: string) => Promise<void>;
   confirmSalaryPayment: (salaryRule: RecurringRule, confirmedDate?: Date) => Promise<void>;
+  setCategoryBudget: (category: TransactionCategory, amountMillimes: number, monthKey?: string) => Promise<void>;
+  deleteCategoryBudget: (id: string) => Promise<void>;
   exportCsv: () => Promise<void>;
   backupData: () => Promise<void>;
 };
+
 
 
 const TransactionContext = createContext<TransactionStore | null>(null);
@@ -103,10 +117,11 @@ export function TransactionProvider({ children }: PropsWithChildren) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [recurringRules, setRecurringRules] = useState<RecurringRule[]>([]);
+  const [categoryBudgets, setCategoryBudgets] = useState<CategoryBudget[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   const refreshData = useCallback(async () => {
-    const [txnRows, accRows, recRows] = await Promise.all([
+    const [txnRows, accRows, recRows, budRows] = await Promise.all([
       db.getAllAsync<TransactionRow>(
         "SELECT id, account_id, type, amount_millimes, category, title, note, transfer_group_id, occurred_at, source FROM transactions WHERE status = 'confirmed' ORDER BY occurred_at DESC",
       ),
@@ -115,6 +130,9 @@ export function TransactionProvider({ children }: PropsWithChildren) {
       ),
       db.getAllAsync<RecurringRow>(
         'SELECT id, type, amount_millimes, account_id, day_of_month, description, is_active, created_at, updated_at FROM recurring_rules ORDER BY created_at ASC',
+      ),
+      db.getAllAsync<CategoryBudgetRow>(
+        'SELECT id, category, amount_millimes, month_key, created_at, updated_at FROM category_budgets ORDER BY created_at ASC',
       ),
     ]);
 
@@ -142,7 +160,18 @@ export function TransactionProvider({ children }: PropsWithChildren) {
         updatedAt: row.updated_at,
       })),
     );
+    setCategoryBudgets(
+      budRows.map((row) => ({
+        id: row.id,
+        category: row.category,
+        amountMillimes: row.amount_millimes,
+        monthKey: row.month_key ?? undefined,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      })),
+    );
   }, [db]);
+
 
   useEffect(() => {
     async function load() {
@@ -364,6 +393,48 @@ export function TransactionProvider({ children }: PropsWithChildren) {
     setTransactions((current) => [record, ...current].sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime()));
   }, [db]);
 
+  const setCategoryBudget = useCallback(async (category: TransactionCategory, amountMillimes: number, monthKey?: string) => {
+    const now = new Date().toISOString();
+    const existing = categoryBudgets.find((b) => b.category === category && b.monthKey === monthKey);
+
+    if (amountMillimes <= 0) {
+      if (existing) {
+        await db.runAsync('DELETE FROM category_budgets WHERE id = ?', existing.id);
+        setCategoryBudgets((current) => current.filter((b) => b.id !== existing.id));
+      }
+      return;
+    }
+
+    if (existing) {
+      await db.runAsync(
+        'UPDATE category_budgets SET amount_millimes = ?, updated_at = ? WHERE id = ?',
+        amountMillimes, now, existing.id,
+      );
+      setCategoryBudgets((current) =>
+        current.map((b) => (b.id === existing.id ? { ...b, amountMillimes, updatedAt: now } : b)),
+      );
+    } else {
+      const newBudget: CategoryBudget = {
+        id: `bud_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        category,
+        amountMillimes,
+        monthKey,
+        createdAt: now,
+        updatedAt: now,
+      };
+      await db.runAsync(
+        'INSERT INTO category_budgets (id, category, amount_millimes, month_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+        newBudget.id, newBudget.category, newBudget.amountMillimes, newBudget.monthKey ?? null, now, now,
+      );
+      setCategoryBudgets((current) => [...current, newBudget]);
+    }
+  }, [categoryBudgets, db]);
+
+  const deleteCategoryBudget = useCallback(async (id: string) => {
+    await db.runAsync('DELETE FROM category_budgets WHERE id = ?', id);
+    setCategoryBudgets((current) => current.filter((b) => b.id !== id));
+  }, [db]);
+
   const salaryRule = useMemo(() => {
     return recurringRules.find((r) => r.type === 'income' && r.isActive);
   }, [recurringRules]);
@@ -397,6 +468,7 @@ export function TransactionProvider({ children }: PropsWithChildren) {
       accounts,
       accountBalances,
       recurringRules,
+      categoryBudgets,
       salaryRule,
       balanceMillimes: totalBalanceMillimes,
       monthIncomeMillimes: currentMonthTransactions.filter((transaction) => transaction.type === 'income').reduce((total, transaction) => total + transaction.amountMillimes, 0),
@@ -409,10 +481,13 @@ export function TransactionProvider({ children }: PropsWithChildren) {
       saveSalaryRule,
       deleteSalaryRule,
       confirmSalaryPayment,
+      setCategoryBudget,
+      deleteCategoryBudget,
       exportCsv: () => exportTransactionsCsv(transactions),
       backupData: async () => createBackup(await getBackupSnapshot(db)),
     };
-  }, [accounts, addTransaction, addTransfer, confirmSalaryPayment, db, deleteSalaryRule, deleteTransaction, isLoading, recurringRules, salaryRule, saveSalaryRule, transactions, updateTransaction]);
+  }, [accounts, addTransaction, addTransfer, categoryBudgets, confirmSalaryPayment, db, deleteCategoryBudget, deleteSalaryRule, deleteTransaction, isLoading, recurringRules, salaryRule, saveSalaryRule, setCategoryBudget, transactions, updateTransaction]);
+
 
   return <TransactionContext.Provider value={value}>{children}</TransactionContext.Provider>;
 }

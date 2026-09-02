@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 3;
+const DATABASE_VERSION = 4;
 
 export async function migrateDbIfNeeded(db: SQLiteDatabase) {
   const result = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
@@ -52,6 +52,15 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
         updated_at TEXT NOT NULL,
         FOREIGN KEY (account_id) REFERENCES accounts(id)
       );
+
+      CREATE TABLE IF NOT EXISTS category_budgets (
+        id TEXT PRIMARY KEY NOT NULL,
+        category TEXT NOT NULL,
+        amount_millimes INTEGER NOT NULL CHECK (amount_millimes > 0),
+        month_key TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
 
     const now = new Date().toISOString();
@@ -93,16 +102,32 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
     currentVersion = 3;
   }
 
+  if (currentVersion === 3) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS category_budgets (
+        id TEXT PRIMARY KEY NOT NULL,
+        category TEXT NOT NULL,
+        amount_millimes INTEGER NOT NULL CHECK (amount_millimes > 0),
+        month_key TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+    currentVersion = 4;
+  }
+
   await db.execAsync(`PRAGMA user_version = ${currentVersion}`);
 }
 
 /** A complete, portable snapshot for a user-initiated local backup. */
 export async function getBackupSnapshot(db: SQLiteDatabase) {
-  const [accounts, transactions, recurringRules] = await Promise.all([
+  const [accounts, transactions, recurringRules, categoryBudgets] = await Promise.all([
     db.getAllAsync('SELECT * FROM accounts ORDER BY created_at ASC'),
     db.getAllAsync('SELECT * FROM transactions ORDER BY occurred_at DESC'),
     db.getAllAsync('SELECT * FROM recurring_rules ORDER BY created_at ASC'),
+    db.getAllAsync('SELECT * FROM category_budgets ORDER BY created_at ASC'),
   ]);
 
-  return { accounts, transactions, recurringRules };
+  return { accounts, transactions, recurringRules, categoryBudgets };
 }
+
