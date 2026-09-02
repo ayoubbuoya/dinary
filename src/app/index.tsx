@@ -1,11 +1,14 @@
+import { useState } from 'react';
 import { useRouter } from 'expo-router';
 import { ArrowLeftRight, ArrowRight, Bot, CirclePlus, ReceiptText, WalletCards } from 'lucide-react-native';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { BalanceCard } from '@/components/finance/BalanceCard';
 import { MonthSummaryCard } from '@/components/finance/MonthSummaryCard';
 import { TransactionItem } from '@/components/finance/TransactionItem';
 import { AccountPill } from '@/components/finance/AccountPill';
 import { QuickExpenseBar, type QuickFavorite } from '@/components/finance/QuickExpenseBar';
+import { PaydayBanner } from '@/components/finance/PaydayBanner';
+import { SafeToSpendCard } from '@/components/finance/SafeToSpendCard';
 import { Screen } from '@/components/layout/Screen';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -15,14 +18,43 @@ import { colors, radius } from '@/constants/colors';
 import { getLocalMonthKey, formatMonthYear, formatToday } from '@/lib/date';
 import { formatMoney } from '@/lib/format-money';
 import { useTransactions } from '@/features/transactions/transaction-store';
+import { calculateSafeDailySpend, getDaysUntilPayday, isPaydayDueForConfirmation } from '@/lib/salary';
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { balanceMillimes, monthIncomeMillimes, monthExpenseMillimes, transactions, accounts, accountBalances, isLoading } = useTransactions();
+  const {
+    balanceMillimes,
+    monthIncomeMillimes,
+    monthExpenseMillimes,
+    transactions,
+    accounts,
+    accountBalances,
+    salaryRule,
+    confirmSalaryPayment,
+    isLoading,
+  } = useTransactions();
+
+  const [isPaydayDismissed, setIsPaydayDismissed] = useState(false);
+  const [isConfirmingSalary, setIsConfirmingSalary] = useState(false);
+
   const now = new Date();
-  const currentMonthExpenses = transactions.filter((transaction) => transaction.type === 'expense' && getLocalMonthKey(new Date(transaction.occurredAt)) === getLocalMonthKey(now));
-  const categoryTotals = currentMonthExpenses.reduce<Record<string, number>>((totals, transaction) => ({ ...totals, [transaction.category]: (totals[transaction.category] ?? 0) + transaction.amountMillimes }), {});
+  const currentMonthExpenses = transactions.filter(
+    (transaction) =>
+      transaction.type === 'expense' &&
+      getLocalMonthKey(new Date(transaction.occurredAt)) === getLocalMonthKey(now),
+  );
+  const categoryTotals = currentMonthExpenses.reduce<Record<string, number>>(
+    (totals, transaction) => ({
+      ...totals,
+      [transaction.category]: (totals[transaction.category] ?? 0) + transaction.amountMillimes,
+    }),
+    {},
+  );
   const topCategory = Object.entries(categoryTotals).sort(([, first], [, second]) => second - first)[0];
+
+  const daysUntilPayday = salaryRule ? getDaysUntilPayday(salaryRule.dayOfMonth, now) : 0;
+  const isPaydayDue = isPaydayDueForConfirmation(salaryRule, transactions, now);
+  const safeSpendMetrics = salaryRule ? calculateSafeDailySpend(balanceMillimes, daysUntilPayday) : undefined;
 
   const handleSelectFavorite = (favorite: QuickFavorite) => {
     router.navigate({
@@ -34,6 +66,22 @@ export default function HomeScreen() {
         note: favorite.label,
       },
     });
+  };
+
+  const handleConfirmSalary = async () => {
+    if (!salaryRule) return;
+    setIsConfirmingSalary(true);
+    try {
+      await confirmSalaryPayment(salaryRule);
+      Alert.alert(
+        'Salary Confirmed! 🎉',
+        `${formatMoney(salaryRule.amountMillimes)} has been added to your balance.`,
+      );
+    } catch (error) {
+      Alert.alert('Confirmation failed', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setIsConfirmingSalary(false);
+    }
   };
 
   return (
@@ -53,8 +101,31 @@ export default function HomeScreen() {
         <Text variant="caption">Your {formatMonthYear(now)} money overview</Text>
       </View>
 
-      <BalanceCard balanceMillimes={balanceMillimes} incomeMillimes={monthIncomeMillimes} expenseMillimes={monthExpenseMillimes} />
+      {/* Payday 1-Tap Confirmation Banner */}
+      {isPaydayDue && !isPaydayDismissed && salaryRule && (
+        <PaydayBanner
+          salaryRule={salaryRule}
+          isConfirming={isConfirmingSalary}
+          onConfirm={() => void handleConfirmSalary()}
+          onDismiss={() => setIsPaydayDismissed(true)}
+        />
+      )}
 
+      {/* Balance Card */}
+      <BalanceCard
+        balanceMillimes={balanceMillimes}
+        incomeMillimes={monthIncomeMillimes}
+        expenseMillimes={monthExpenseMillimes}
+      />
+
+      {/* Safe to Spend Velocity Card */}
+      <SafeToSpendCard
+        metrics={safeSpendMetrics}
+        hasSalaryConfigured={Boolean(salaryRule)}
+        onPressConfigure={() => router.navigate('/salary')}
+      />
+
+      {/* Accounts Breakdown */}
       <View style={styles.accountsSection}>
         <View style={styles.accountsHeader}>
           <Text variant="label">YOUR ACCOUNTS</Text>
@@ -71,6 +142,7 @@ export default function HomeScreen() {
         </ScrollView>
       </View>
 
+      {/* Quick Actions */}
       <View style={styles.actions}>
         <QuickAction label="Expense" Icon={CirclePlus} onPress={() => router.navigate({ pathname: '/add-transaction', params: { type: 'expense' } })} />
         <QuickAction label="Income" Icon={WalletCards} onPress={() => router.navigate({ pathname: '/add-transaction', params: { type: 'income' } })} />
@@ -78,8 +150,10 @@ export default function HomeScreen() {
         <QuickAction label="Hsebli" Icon={Bot} onPress={() => router.navigate('/assistant')} />
       </View>
 
+      {/* 1-Tap Daily Expense Shortcuts */}
       <QuickExpenseBar onSelectFavorite={handleSelectFavorite} />
 
+      {/* This Month Analytics Carousel */}
       <View style={styles.sectionHeader}>
         <Text variant="subtitle">This month</Text>
       </View>
@@ -89,13 +163,22 @@ export default function HomeScreen() {
           title={topCategory ? categoryFor(topCategory[0] as Parameters<typeof categoryFor>[0]).label : 'No expenses yet'}
           detail={topCategory ? `${formatMoney(topCategory[1])} spent` : 'Add an expense to see your spending.'}
         />
-        <MonthSummaryCard
-          eyebrow="SALARY"
-          title="Not configured"
-          detail="Set up an expected salary when ready."
-        />
+        <Pressable onPress={() => router.navigate('/salary')}>
+          <MonthSummaryCard
+            eyebrow="EXPECTED SALARY"
+            title={salaryRule ? formatMoney(salaryRule.amountMillimes) : 'Not configured'}
+            detail={
+              salaryRule
+                ? daysUntilPayday === 0
+                  ? 'Payday is today 🎉'
+                  : `In ${daysUntilPayday} ${daysUntilPayday === 1 ? 'day' : 'days'}`
+                : 'Set up an expected salary rule.'
+            }
+          />
+        </Pressable>
       </ScrollView>
 
+      {/* Recent Activity */}
       <View style={styles.sectionHeader}>
         <Text variant="subtitle">Recent activity</Text>
         <Pressable onPress={() => router.navigate('/transactions')} style={styles.viewAll}>
@@ -127,6 +210,7 @@ export default function HomeScreen() {
         </Card>
       )}
 
+      {/* Insight Card */}
       <Card variant="muted" style={styles.insight}>
         <ReceiptText size={22} color={colors.accent} />
         <View style={styles.insightText}>
@@ -173,3 +257,4 @@ const styles = StyleSheet.create({
   insightText: { flex: 1, gap: 3 },
   insightTitle: { fontWeight: '800' },
 });
+

@@ -7,6 +7,7 @@ import { createBackup, exportTransactionsCsv } from '@/lib/transaction-export';
 import { getBackupSnapshot } from '@/features/transactions/database';
 import type { Transaction, TransactionCategory, TransactionType } from '@/types/transaction';
 import type { Account, AccountType } from '@/types/account';
+import type { RecurringRule, SalaryRuleInput } from '@/types/recurring';
 
 export type NewTransaction = {
   accountId?: string;
@@ -46,10 +47,24 @@ type AccountRow = {
   is_archived: number;
 };
 
+type RecurringRow = {
+  id: string;
+  type: 'income' | 'expense';
+  amount_millimes: number | null;
+  account_id: string;
+  day_of_month: number;
+  description: string;
+  is_active: number;
+  created_at: string;
+  updated_at: string;
+};
+
 type TransactionStore = {
   transactions: Transaction[];
   accounts: Account[];
   accountBalances: Record<string, number>;
+  recurringRules: RecurringRule[];
+  salaryRule?: RecurringRule;
   balanceMillimes: number;
   monthIncomeMillimes: number;
   monthExpenseMillimes: number;
@@ -58,9 +73,13 @@ type TransactionStore = {
   addTransfer: (transfer: NewTransfer) => Promise<void>;
   updateTransaction: (id: string, transaction: NewTransaction) => Promise<void>;
   deleteTransaction: (id: string) => Promise<void>;
+  saveSalaryRule: (input: SalaryRuleInput) => Promise<void>;
+  deleteSalaryRule: (id: string) => Promise<void>;
+  confirmSalaryPayment: (salaryRule: RecurringRule, confirmedDate?: Date) => Promise<void>;
   exportCsv: () => Promise<void>;
   backupData: () => Promise<void>;
 };
+
 
 const TransactionContext = createContext<TransactionStore | null>(null);
 
@@ -83,15 +102,19 @@ export function TransactionProvider({ children }: PropsWithChildren) {
   const db = useSQLiteContext();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [recurringRules, setRecurringRules] = useState<RecurringRule[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   const refreshData = useCallback(async () => {
-    const [txnRows, accRows] = await Promise.all([
+    const [txnRows, accRows, recRows] = await Promise.all([
       db.getAllAsync<TransactionRow>(
         "SELECT id, account_id, type, amount_millimes, category, title, note, transfer_group_id, occurred_at, source FROM transactions WHERE status = 'confirmed' ORDER BY occurred_at DESC",
       ),
       db.getAllAsync<AccountRow>(
         'SELECT id, name, type, opening_balance_millimes, is_archived FROM accounts WHERE is_archived = 0 ORDER BY created_at ASC',
+      ),
+      db.getAllAsync<RecurringRow>(
+        'SELECT id, type, amount_millimes, account_id, day_of_month, description, is_active, created_at, updated_at FROM recurring_rules ORDER BY created_at ASC',
       ),
     ]);
 
@@ -104,6 +127,19 @@ export function TransactionProvider({ children }: PropsWithChildren) {
         openingBalanceMillimes: row.opening_balance_millimes,
         isArchived: Boolean(row.is_archived),
         emoji: accountConfigFor(row.id).emoji,
+      })),
+    );
+    setRecurringRules(
+      recRows.map((row) => ({
+        id: row.id,
+        type: row.type,
+        amountMillimes: row.amount_millimes ?? 0,
+        accountId: row.account_id,
+        dayOfMonth: row.day_of_month,
+        description: row.description,
+        isActive: Boolean(row.is_active),
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
       })),
     );
   }, [db]);
@@ -247,6 +283,91 @@ export function TransactionProvider({ children }: PropsWithChildren) {
     }
   }, [db, transactions]);
 
+  const saveSalaryRule = useCallback(async (input: SalaryRuleInput) => {
+    const now = new Date().toISOString();
+    const existingSalaryRule = recurringRules.find((r) => r.type === 'income');
+
+    if (existingSalaryRule) {
+      await db.runAsync(
+        `UPDATE recurring_rules
+         SET amount_millimes = ?, account_id = ?, day_of_month = ?, description = ?, is_active = ?, updated_at = ?
+         WHERE id = ?`,
+        input.amountMillimes, input.accountId, input.dayOfMonth, input.description || 'Monthly salary',
+        input.isActive !== false ? 1 : 0, now, existingSalaryRule.id,
+      );
+
+      setRecurringRules((current) =>
+        current.map((r) =>
+          r.id === existingSalaryRule.id
+            ? {
+                ...r,
+                amountMillimes: input.amountMillimes,
+                accountId: input.accountId,
+                dayOfMonth: input.dayOfMonth,
+                description: input.description || 'Monthly salary',
+                isActive: input.isActive !== false,
+                updatedAt: now,
+              }
+            : r,
+        ),
+      );
+    } else {
+      const newRule: RecurringRule = {
+        id: `rec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        type: 'income',
+        amountMillimes: input.amountMillimes,
+        accountId: input.accountId,
+        dayOfMonth: input.dayOfMonth,
+        description: input.description || 'Monthly salary',
+        isActive: input.isActive !== false,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      await db.runAsync(
+        `INSERT INTO recurring_rules (id, type, amount_millimes, account_id, day_of_month, description, is_active, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        newRule.id, 'income', newRule.amountMillimes, newRule.accountId, newRule.dayOfMonth, newRule.description,
+        newRule.isActive ? 1 : 0, now, now,
+      );
+
+      setRecurringRules((current) => [...current, newRule]);
+    }
+  }, [db, recurringRules]);
+
+  const deleteSalaryRule = useCallback(async (id: string) => {
+    await db.runAsync('DELETE FROM recurring_rules WHERE id = ?', id);
+    setRecurringRules((current) => current.filter((r) => r.id !== id));
+  }, [db]);
+
+  const confirmSalaryPayment = useCallback(async (salaryRuleToConfirm: RecurringRule, confirmedDate = new Date()) => {
+    const now = new Date().toISOString();
+    const record: Transaction = {
+      id: `txn_${Date.now()}_sal_${Math.random().toString(36).slice(2, 6)}`,
+      accountId: salaryRuleToConfirm.accountId,
+      type: 'income',
+      amountMillimes: salaryRuleToConfirm.amountMillimes,
+      category: 'salary',
+      title: salaryRuleToConfirm.description || 'Monthly salary',
+      note: 'Confirmed recurring salary',
+      source: 'recurring',
+      occurredAt: confirmedDate.toISOString(),
+    };
+
+    await db.runAsync(
+      `INSERT INTO transactions (id, account_id, type, amount_millimes, category, title, note, occurred_at, source, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      record.id, record.accountId, record.type, record.amountMillimes, record.category, record.title,
+      record.note ?? null, record.occurredAt, 'recurring', 'confirmed', now, now,
+    );
+
+    setTransactions((current) => [record, ...current].sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime()));
+  }, [db]);
+
+  const salaryRule = useMemo(() => {
+    return recurringRules.find((r) => r.type === 'income' && r.isActive);
+  }, [recurringRules]);
+
   const value = useMemo<TransactionStore>(() => {
     const accountBalances: Record<string, number> = {};
     for (const acc of accounts) {
@@ -275,6 +396,8 @@ export function TransactionProvider({ children }: PropsWithChildren) {
       transactions,
       accounts,
       accountBalances,
+      recurringRules,
+      salaryRule,
       balanceMillimes: totalBalanceMillimes,
       monthIncomeMillimes: currentMonthTransactions.filter((transaction) => transaction.type === 'income').reduce((total, transaction) => total + transaction.amountMillimes, 0),
       monthExpenseMillimes: currentMonthTransactions.filter((transaction) => transaction.type === 'expense').reduce((total, transaction) => total + transaction.amountMillimes, 0),
@@ -283,10 +406,13 @@ export function TransactionProvider({ children }: PropsWithChildren) {
       addTransfer,
       updateTransaction,
       deleteTransaction,
+      saveSalaryRule,
+      deleteSalaryRule,
+      confirmSalaryPayment,
       exportCsv: () => exportTransactionsCsv(transactions),
       backupData: async () => createBackup(await getBackupSnapshot(db)),
     };
-  }, [accounts, addTransaction, addTransfer, db, deleteTransaction, isLoading, transactions, updateTransaction]);
+  }, [accounts, addTransaction, addTransfer, confirmSalaryPayment, db, deleteSalaryRule, deleteTransaction, isLoading, recurringRules, salaryRule, saveSalaryRule, transactions, updateTransaction]);
 
   return <TransactionContext.Provider value={value}>{children}</TransactionContext.Provider>;
 }
@@ -296,4 +422,5 @@ export function useTransactions() {
   if (!store) throw new Error('useTransactions must be used within TransactionProvider');
   return store;
 }
+
 
