@@ -4,7 +4,6 @@ import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { BalanceCard } from '@/components/finance/BalanceCard';
 import { MonthSummaryCard } from '@/components/finance/MonthSummaryCard';
 import { TransactionItem } from '@/components/finance/TransactionItem';
-import { VoiceButton } from '@/components/finance/VoiceButton';
 import { Screen } from '@/components/layout/Screen';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -27,7 +26,7 @@ export default function HomeScreen() {
     <View style={styles.header}><View><Text variant="caption">{formatToday(now)}</Text><Text variant="title">Dinary</Text></View><View style={styles.avatar}><Text style={styles.avatarText}>D</Text></View></View>
     <View style={styles.intro}><Text variant="subtitle">Win yemchi dinarek?</Text><Text variant="caption">Your {formatMonthYear(now)} money overview</Text></View>
     <BalanceCard balanceMillimes={balanceMillimes} incomeMillimes={monthIncomeMillimes} expenseMillimes={monthExpenseMillimes} />
-    <View style={styles.actions}><QuickAction label="Expense" Icon={CirclePlus} onPress={() => router.navigate('/add-transaction')} /><QuickAction label="Income" Icon={WalletCards} onPress={() => router.navigate('/add-transaction')} /><QuickAction label="Hsebli" Icon={Bot} onPress={() => router.navigate('/assistant')} /><VoiceButton compact onPress={() => router.navigate('/add-transaction')} /></View>
+    <View style={styles.actions}><QuickAction label="Expense" Icon={CirclePlus} onPress={() => router.navigate('/add-transaction')} /><QuickAction label="Income" Icon={WalletCards} onPress={() => router.navigate('/add-transaction')} /><QuickAction label="Hsebli" Icon={Bot} onPress={() => router.navigate('/assistant')} /></View>
     <View style={styles.sectionHeader}><Text variant="subtitle">This month</Text></View>
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryScroll}>
       <MonthSummaryCard eyebrow="TOP CATEGORY" title={topCategory ? categoryFor(topCategory[0] as Parameters<typeof categoryFor>[0]).label : 'No expenses yet'} detail={topCategory ? `${formatMoney(topCategory[1])} spent` : 'Add an expense to see your spending.'} />
