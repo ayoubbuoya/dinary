@@ -247,13 +247,13 @@ export function TransactionProvider({ children }: PropsWithChildren) {
     await db.withTransactionAsync(async () => {
       await db.runAsync(
         `INSERT INTO transactions (id, account_id, type, amount_millimes, category, title, note, transfer_group_id, occurred_at, source, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         outRecord.id, outRecord.accountId, 'transfer', outRecord.amountMillimes, 'other', outRecord.title,
         outRecord.note ?? null, groupId, outRecord.occurredAt, 'transfer_out', 'confirmed', now, now,
       );
       await db.runAsync(
         `INSERT INTO transactions (id, account_id, type, amount_millimes, category, title, note, transfer_group_id, occurred_at, source, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         inRecord.id, inRecord.accountId, 'transfer', inRecord.amountMillimes, 'other', inRecord.title,
         inRecord.note ?? null, groupId, inRecord.occurredAt, 'transfer_in', 'confirmed', now, now,
       );
