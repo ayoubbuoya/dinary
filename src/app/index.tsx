@@ -22,6 +22,7 @@ import { colors, radius } from '@/constants/colors';
 import { getLocalMonthKey, formatMonthYear, formatToday } from '@/lib/date';
 import { formatMoney } from '@/lib/format-money';
 import { useTransactions } from '@/features/transactions/transaction-store';
+import { useAuth } from '@/features/auth/auth-store';
 import { extractFinancialFacts } from '@/lib/financial-facts';
 import { calculateSafeDailySpend, getDaysUntilPayday, isPaydayDueForConfirmation } from '@/lib/salary';
 
@@ -40,6 +41,7 @@ export default function HomeScreen() {
     updateAccountOpeningBalance,
     isLoading,
   } = useTransactions();
+  const { user } = useAuth();
 
   const [isPaydayDismissed, setIsPaydayDismissed] = useState(false);
   const [isConfirmingSalary, setIsConfirmingSalary] = useState(false);
@@ -116,9 +118,14 @@ export default function HomeScreen() {
           <Text variant="caption">{formatToday(now)}</Text>
           <Text variant="title">Dinary</Text>
         </View>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>D</Text>
-        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={user ? 'Account and cloud backup' : 'Sign in for cloud backup'}
+          onPress={() => router.navigate('/account')}
+          style={({ pressed }) => [styles.avatar, pressed && styles.avatarPressed]}
+        >
+          <Text style={styles.avatarText}>{(user?.email ?? 'D').charAt(0).toUpperCase()}</Text>
+        </Pressable>
       </View>
 
       <View style={styles.intro}>
@@ -302,7 +309,8 @@ function QuickAction({ label, Icon, onPress }: { label: string; Icon: typeof Cir
 
 const styles = StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primarySoft },
+  avatar: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primarySoft },
+  avatarPressed: { opacity: .8, transform: [{ scale: .96 }] },
   avatarText: { color: colors.primary, fontWeight: '800' },
   intro: { gap: 2 },
   accountsSection: { gap: 8 },

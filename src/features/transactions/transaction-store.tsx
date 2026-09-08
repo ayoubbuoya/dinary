@@ -80,6 +80,8 @@ type TransactionStore = {
   monthIncomeMillimes: number;
   monthExpenseMillimes: number;
   isLoading: boolean;
+  /** Re-reads every table from SQLite; used after a sync pulls remote changes. */
+  refresh: () => Promise<void>;
   addTransaction: (transaction: NewTransaction) => Promise<void>;
   addTransfer: (transfer: NewTransfer) => Promise<void>;
   updateTransaction: (id: string, transaction: NewTransaction) => Promise<void>;
@@ -126,16 +128,16 @@ export function TransactionProvider({ children }: PropsWithChildren) {
   const refreshData = useCallback(async () => {
     const [txnRows, accRows, recRows, budRows] = await Promise.all([
       db.getAllAsync<TransactionRow>(
-        "SELECT id, account_id, type, amount_millimes, category, title, note, transfer_group_id, occurred_at, source FROM transactions WHERE status = 'confirmed' ORDER BY occurred_at DESC",
+        "SELECT id, account_id, type, amount_millimes, category, title, note, transfer_group_id, occurred_at, source FROM transactions WHERE status = 'confirmed' AND deleted_at IS NULL ORDER BY occurred_at DESC",
       ),
       db.getAllAsync<AccountRow>(
-        'SELECT id, name, type, opening_balance_millimes, is_archived FROM accounts WHERE is_archived = 0 ORDER BY created_at ASC',
+        'SELECT id, name, type, opening_balance_millimes, is_archived FROM accounts WHERE is_archived = 0 AND deleted_at IS NULL ORDER BY created_at ASC',
       ),
       db.getAllAsync<RecurringRow>(
-        'SELECT id, type, amount_millimes, account_id, day_of_month, description, is_active, created_at, updated_at FROM recurring_rules ORDER BY created_at ASC',
+        'SELECT id, type, amount_millimes, account_id, day_of_month, description, is_active, created_at, updated_at FROM recurring_rules WHERE deleted_at IS NULL ORDER BY created_at ASC',
       ),
       db.getAllAsync<CategoryBudgetRow>(
-        'SELECT id, category, amount_millimes, month_key, created_at, updated_at FROM category_budgets ORDER BY created_at ASC',
+        'SELECT id, category, amount_millimes, month_key, created_at, updated_at FROM category_budgets WHERE deleted_at IS NULL ORDER BY created_at ASC',
       ),
     ]);
 
@@ -270,7 +272,7 @@ export function TransactionProvider({ children }: PropsWithChildren) {
 
     const result = await db.runAsync(
       `UPDATE transactions
-       SET account_id = ?, type = ?, amount_millimes = ?, category = ?, title = ?, note = ?, occurred_at = ?, updated_at = ?
+       SET account_id = ?, type = ?, amount_millimes = ?, category = ?, title = ?, note = ?, occurred_at = ?, updated_at = ?, sync_state = 'pending'
        WHERE id = ? AND status = 'confirmed'`,
       targetAccountId, transaction.type, transaction.amountMillimes, transaction.category, title, transaction.note?.trim() || null,
       transaction.occurredAt, updatedAt, id,
@@ -304,12 +306,12 @@ export function TransactionProvider({ children }: PropsWithChildren) {
     const updatedAt = new Date().toISOString();
     if (target.transferGroupId) {
       await db.runAsync(
-        "UPDATE transactions SET status = 'voided', updated_at = ? WHERE transfer_group_id = ? AND status = 'confirmed'",
+        "UPDATE transactions SET status = 'voided', updated_at = ?, sync_state = 'pending' WHERE transfer_group_id = ? AND status = 'confirmed'",
         updatedAt, target.transferGroupId,
       );
       setTransactions((current) => current.filter((record) => record.transferGroupId !== target.transferGroupId));
     } else {
-      const result = await db.runAsync("UPDATE transactions SET status = 'voided', updated_at = ? WHERE id = ? AND status = 'confirmed'", updatedAt, id);
+      const result = await db.runAsync("UPDATE transactions SET status = 'voided', updated_at = ?, sync_state = 'pending' WHERE id = ? AND status = 'confirmed'", updatedAt, id);
       if (result.changes !== 1) throw new Error('This transaction could not be deleted.');
       setTransactions((current) => current.filter((record) => record.id !== id));
     }
@@ -322,7 +324,7 @@ export function TransactionProvider({ children }: PropsWithChildren) {
     if (existingSalaryRule) {
       await db.runAsync(
         `UPDATE recurring_rules
-         SET amount_millimes = ?, account_id = ?, day_of_month = ?, description = ?, is_active = ?, updated_at = ?
+         SET amount_millimes = ?, account_id = ?, day_of_month = ?, description = ?, is_active = ?, updated_at = ?, sync_state = 'pending'
          WHERE id = ?`,
         input.amountMillimes, input.accountId, input.dayOfMonth, input.description || 'Monthly salary',
         input.isActive !== false ? 1 : 0, now, existingSalaryRule.id,
@@ -368,7 +370,13 @@ export function TransactionProvider({ children }: PropsWithChildren) {
   }, [db, recurringRules]);
 
   const deleteSalaryRule = useCallback(async (id: string) => {
-    await db.runAsync('DELETE FROM recurring_rules WHERE id = ?', id);
+    // Tombstoned rather than removed: a hard delete cannot be replicated to the
+    // other devices sharing this account.
+    const now = new Date().toISOString();
+    await db.runAsync(
+      "UPDATE recurring_rules SET deleted_at = ?, updated_at = ?, sync_state = 'pending' WHERE id = ?",
+      now, now, id,
+    );
     setRecurringRules((current) => current.filter((r) => r.id !== id));
   }, [db]);
 
@@ -402,7 +410,10 @@ export function TransactionProvider({ children }: PropsWithChildren) {
 
     if (amountMillimes <= 0) {
       if (existing) {
-        await db.runAsync('DELETE FROM category_budgets WHERE id = ?', existing.id);
+        await db.runAsync(
+          "UPDATE category_budgets SET deleted_at = ?, updated_at = ?, sync_state = 'pending' WHERE id = ?",
+          now, now, existing.id,
+        );
         setCategoryBudgets((current) => current.filter((b) => b.id !== existing.id));
       }
       return;
@@ -410,7 +421,7 @@ export function TransactionProvider({ children }: PropsWithChildren) {
 
     if (existing) {
       await db.runAsync(
-        'UPDATE category_budgets SET amount_millimes = ?, updated_at = ? WHERE id = ?',
+        "UPDATE category_budgets SET amount_millimes = ?, updated_at = ?, sync_state = 'pending' WHERE id = ?",
         amountMillimes, now, existing.id,
       );
       setCategoryBudgets((current) =>
@@ -434,14 +445,18 @@ export function TransactionProvider({ children }: PropsWithChildren) {
   }, [categoryBudgets, db]);
 
   const deleteCategoryBudget = useCallback(async (id: string) => {
-    await db.runAsync('DELETE FROM category_budgets WHERE id = ?', id);
+    const now = new Date().toISOString();
+    await db.runAsync(
+      "UPDATE category_budgets SET deleted_at = ?, updated_at = ?, sync_state = 'pending' WHERE id = ?",
+      now, now, id,
+    );
     setCategoryBudgets((current) => current.filter((b) => b.id !== id));
   }, [db]);
 
   const updateAccountOpeningBalance = useCallback(async (accountId: string, openingBalanceMillimes: number) => {
     const now = new Date().toISOString();
     await db.runAsync(
-      'UPDATE accounts SET opening_balance_millimes = ?, updated_at = ? WHERE id = ?',
+      "UPDATE accounts SET opening_balance_millimes = ?, updated_at = ?, sync_state = 'pending' WHERE id = ?",
       openingBalanceMillimes, now, accountId,
     );
     setAccounts((current) =>
@@ -488,6 +503,7 @@ export function TransactionProvider({ children }: PropsWithChildren) {
       monthIncomeMillimes: currentMonthTransactions.filter((transaction) => transaction.type === 'income').reduce((total, transaction) => total + transaction.amountMillimes, 0),
       monthExpenseMillimes: currentMonthTransactions.filter((transaction) => transaction.type === 'expense').reduce((total, transaction) => total + transaction.amountMillimes, 0),
       isLoading,
+      refresh: refreshData,
       addTransaction,
       addTransfer,
       updateTransaction,
@@ -501,7 +517,7 @@ export function TransactionProvider({ children }: PropsWithChildren) {
       exportCsv: () => exportTransactionsCsv(transactions),
       backupData: async () => createBackup(await getBackupSnapshot(db)),
     };
-  }, [accounts, addTransaction, addTransfer, categoryBudgets, confirmSalaryPayment, db, deleteCategoryBudget, deleteSalaryRule, deleteTransaction, isLoading, recurringRules, salaryRule, saveSalaryRule, setCategoryBudget, transactions, updateAccountOpeningBalance, updateTransaction]);
+  }, [accounts, addTransaction, addTransfer, categoryBudgets, confirmSalaryPayment, db, deleteCategoryBudget, deleteSalaryRule, deleteTransaction, isLoading, recurringRules, refreshData, salaryRule, saveSalaryRule, setCategoryBudget, transactions, updateAccountOpeningBalance, updateTransaction]);
 
 
 
