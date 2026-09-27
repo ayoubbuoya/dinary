@@ -557,7 +557,7 @@ export function TransactionProvider({ children }: PropsWithChildren) {
       deleteCategoryBudget,
       addCustomCategory,
       updateAccountOpeningBalance,
-      exportCsv: () => exportTransactionsCsv(transactions),
+      exportCsv: () => exportTransactionsCsv(transactions, customCategories),
       backupData: async () => createBackup(await getBackupSnapshot(db)),
     };
   }, [accounts, addCustomCategory, addTransaction, addTransfer, categoryBudgets, customCategories, confirmSalaryPayment, db, deleteCategoryBudget, deleteSalaryRule, deleteTransaction, isLoading, recurringRules, salaryRule, saveSalaryRule, setCategoryBudget, transactions, updateAccountOpeningBalance, updateTransaction]);

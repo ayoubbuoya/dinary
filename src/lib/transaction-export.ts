@@ -1,6 +1,8 @@
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import { categoryFor } from '@/constants/categories';
 import { formatMoney } from '@/lib/format-money';
+import type { CustomCategory } from '@/types/category';
 import type { Transaction } from '@/types/transaction';
 
 type BackupPayload = {
@@ -24,14 +26,15 @@ async function shareFile(filename: string, content: string, mimeType: string, UT
   await Sharing.shareAsync(file.uri, { dialogTitle: 'Export Dinary data', mimeType, UTI });
 }
 
-export async function exportTransactionsCsv(transactions: Transaction[]) {
+export async function exportTransactionsCsv(transactions: Transaction[], customCategories: CustomCategory[] = []) {
   const rows = [
     'id,type,amount_tnd,category,title,note,occurred_at',
     ...transactions.map((transaction) => [
       transaction.id,
       transaction.type,
       formatMoney(transaction.amountMillimes).replace(' TND', ''),
-      transaction.category,
+      // Export the readable name (e.g. "Gym") rather than the internal ID (e.g. "custom_17...").
+      categoryFor(transaction.category, customCategories).label,
       transaction.title,
       transaction.note ?? '',
       transaction.occurredAt,
