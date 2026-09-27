@@ -1,5 +1,15 @@
 export type TransactionType = 'income' | 'expense' | 'transfer';
-export type TransactionCategory = 'food' | 'groceries' | 'transport' | 'coffee' | 'family' | 'bills' | 'salary' | 'health' | 'shopping' | 'other';
+
+/** Categories that ship with the app and always exist. */
+export type BuiltInCategory = 'food' | 'groceries' | 'transport' | 'coffee' | 'family' | 'bills' | 'salary' | 'health' | 'shopping' | 'other';
+
+/**
+ * User-created categories are stored in the `custom_categories` table.
+ * Their IDs always start with `custom_` so they can never collide with a built-in ID.
+ */
+export type CustomCategoryId = `custom_${string}`;
+
+export type TransactionCategory = BuiltInCategory | CustomCategoryId;
 
 export type Transaction = {
   id: string;
@@ -13,5 +23,3 @@ export type Transaction = {
   transferGroupId?: string;
   occurredAt: string;
 };
-
-

@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { BudgetProgressBar } from '@/components/finance/BudgetProgressBar';
 import { HsebliChatBubble, type ChatMessage } from '@/components/finance/HsebliChatBubble';
 import { colors, radius } from '@/constants/colors';
-import { categories } from '@/constants/categories';
+import { categoryOptionsFor } from '@/constants/categories';
 import { formatMoney } from '@/lib/format-money';
 import { parseTndToMillimes } from '@/lib/parse-money';
 import { useTransactions } from '@/features/transactions/transaction-store';
@@ -32,6 +32,7 @@ export default function AssistantScreen() {
     accountBalances,
     salaryRule,
     categoryBudgets,
+    customCategories,
     setCategoryBudget,
   } = useTransactions();
 
@@ -50,6 +51,7 @@ export default function AssistantScreen() {
     accountBalances,
     salaryRule,
     categoryBudgets,
+    customCategories,
   );
 
   // Initial welcome message
@@ -179,7 +181,7 @@ export default function AssistantScreen() {
                   <Card variant="default" style={styles.budgetFormCard}>
                     <Text style={styles.budgetFormTitle}>Set Monthly Category Limit</Text>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.catChips}>
-                      {categories.filter((c) => c.id !== 'salary').map((cat) => (
+                      {categoryOptionsFor('expense', customCategories).map((cat) => (
                         <Pressable
                           key={cat.id}
                           onPress={() => setSelectedBudgetCat(cat.id)}

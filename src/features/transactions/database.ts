@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 4;
+const DATABASE_VERSION = 5;
 
 export async function migrateDbIfNeeded(db: SQLiteDatabase) {
   const result = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
@@ -116,18 +116,35 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
     currentVersion = 4;
   }
 
+  if (currentVersion === 4) {
+    // User-created categories. Transactions reference them by ID in their existing
+    // `category` column, so no change to the transactions table is needed.
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS custom_categories (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        emoji TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('income', 'expense')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+    currentVersion = 5;
+  }
+
   await db.execAsync(`PRAGMA user_version = ${currentVersion}`);
 }
 
 /** A complete, portable snapshot for a user-initiated local backup. */
 export async function getBackupSnapshot(db: SQLiteDatabase) {
-  const [accounts, transactions, recurringRules, categoryBudgets] = await Promise.all([
+  const [accounts, transactions, recurringRules, categoryBudgets, customCategories] = await Promise.all([
     db.getAllAsync('SELECT * FROM accounts ORDER BY created_at ASC'),
     db.getAllAsync('SELECT * FROM transactions ORDER BY occurred_at DESC'),
     db.getAllAsync('SELECT * FROM recurring_rules ORDER BY created_at ASC'),
     db.getAllAsync('SELECT * FROM category_budgets ORDER BY created_at ASC'),
+    db.getAllAsync('SELECT * FROM custom_categories ORDER BY created_at ASC'),
   ]);
 
-  return { accounts, transactions, recurringRules, categoryBudgets };
+  return { accounts, transactions, recurringRules, categoryBudgets, customCategories };
 }
 

@@ -3,6 +3,7 @@ import { getLocalMonthKey } from './date';
 import { calculateSafeDailySpend, getDaysUntilPayday } from './salary';
 import type { Account } from '@/types/account';
 import type { CategoryBudget, CategoryBudgetStatus } from '@/types/budget';
+import type { CustomCategory } from '@/types/category';
 import type { RecurringRule } from '@/types/recurring';
 import type { Transaction, TransactionCategory } from '@/types/transaction';
 
@@ -44,6 +45,7 @@ export function extractFinancialFacts(
   accountBalances: Record<string, number>,
   salaryRule?: RecurringRule,
   categoryBudgets: CategoryBudget[] = [],
+  customCategories: CustomCategory[] = [],
   referenceDate = new Date(),
 ): FinancialFacts {
   const currentMonthKey = getLocalMonthKey(referenceDate);
@@ -97,7 +99,7 @@ export function extractFinancialFacts(
 
   const sortedCategories: CategoryFact[] = Array.from(categoryMap.entries())
     .map(([cat, val]) => {
-      const info = categoryFor(cat);
+      const info = categoryFor(cat, customCategories);
       const percentage = thisMonthExpenseMillimes > 0 ? (val.amount / thisMonthExpenseMillimes) * 100 : 0;
       return {
         category: cat,

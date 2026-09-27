@@ -1,5 +1,5 @@
 import { StyleSheet, View } from 'react-native';
-import { categoryFor } from '@/constants/categories';
+import { useCategoryFor } from '@/features/transactions/transaction-store';
 import { colors, radius } from '@/constants/colors';
 import { formatMoney } from '@/lib/format-money';
 import { Text } from '@/components/ui/Text';
@@ -12,6 +12,7 @@ type BudgetProgressBarProps = {
 };
 
 export function BudgetProgressBar({ category, spentMillimes, budgetMillimes }: BudgetProgressBarProps) {
+  const categoryFor = useCategoryFor();
   const categoryInfo = categoryFor(category);
   const percentage = budgetMillimes > 0 ? Math.round((spentMillimes / budgetMillimes) * 100) : 0;
   const isOver = percentage > 100;

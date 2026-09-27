@@ -8,7 +8,7 @@ import { TransactionItem } from '@/components/finance/TransactionItem';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Text } from '@/components/ui/Text';
-import { categories } from '@/constants/categories';
+import { allCategoryOptions } from '@/constants/categories';
 import { formatTransactionDate } from '@/lib/format-date';
 import { useTransactions } from '@/features/transactions/transaction-store';
 import { colors, radius } from '@/constants/colors';
@@ -22,7 +22,7 @@ type TypeFilter = 'all' | 'expense' | 'income' | 'transfer';
 
 export default function TransactionsScreen() {
   const router = useRouter();
-  const { transactions, exportCsv, backupData, isLoading } = useTransactions();
+  const { transactions, customCategories, exportCsv, backupData, isLoading } = useTransactions();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<TransactionCategory | 'all'>('all');
@@ -166,7 +166,7 @@ export default function TransactionsScreen() {
             selected={selectedCategory === 'all'}
             onPress={() => setSelectedCategory('all')}
           />
-          {categories.map((category) => (
+          {allCategoryOptions(customCategories).map((category) => (
             <CategoryChip
               key={category.id}
               label={category.label}

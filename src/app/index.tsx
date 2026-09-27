@@ -18,6 +18,7 @@ import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Text } from '@/components/ui/Text';
 import { categoryFor } from '@/constants/categories';
+import type { TransactionCategory } from '@/types/transaction';
 import { colors, radius } from '@/constants/colors';
 import { getLocalMonthKey, formatMonthYear, formatToday } from '@/lib/date';
 import { formatMoney } from '@/lib/format-money';
@@ -36,6 +37,7 @@ export default function HomeScreen() {
     accountBalances,
     salaryRule,
     categoryBudgets,
+    customCategories,
     confirmSalaryPayment,
     updateAccountOpeningBalance,
     isLoading,
@@ -71,6 +73,7 @@ export default function HomeScreen() {
     accountBalances,
     salaryRule,
     categoryBudgets,
+    customCategories,
     now,
   );
 
@@ -225,7 +228,7 @@ export default function HomeScreen() {
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryScroll}>
         <MonthSummaryCard
           eyebrow="TOP CATEGORY"
-          title={topCategory ? categoryFor(topCategory[0] as Parameters<typeof categoryFor>[0]).label : 'No expenses yet'}
+          title={topCategory ? categoryFor(topCategory[0] as TransactionCategory, customCategories).label : 'No expenses yet'}
           detail={topCategory ? `${formatMoney(topCategory[1])} spent` : 'Add an expense to see your spending.'}
         />
         <Pressable onPress={() => router.navigate('/salary')}>
@@ -282,7 +285,7 @@ export default function HomeScreen() {
           <Text style={styles.insightTitle}>A small insight</Text>
           <Text variant="caption">
             {topCategory
-              ? `${categoryFor(topCategory[0] as Parameters<typeof categoryFor>[0]).label} is your largest expense category this month.`
+              ? `${categoryFor(topCategory[0] as TransactionCategory, customCategories).label} is your largest expense category this month.`
               : 'Insights will appear after you add transactions.'}
           </Text>
         </View>

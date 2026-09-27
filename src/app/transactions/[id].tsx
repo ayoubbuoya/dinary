@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeftRight } from 'lucide-react-native';
-import { CategoryChip } from '@/components/finance/CategoryChip';
+import { CategoryPicker } from '@/components/finance/CategoryPicker';
 import { TransactionDateInput } from '@/components/finance/TransactionDateInput';
 import { Screen } from '@/components/layout/Screen';
 import { Button } from '@/components/ui/Button';
@@ -10,7 +10,7 @@ import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { Text } from '@/components/ui/Text';
-import { categories } from '@/constants/categories';
+import { isCategoryAllowedFor } from '@/constants/categories';
 import { colors, radius } from '@/constants/colors';
 import { formatMoney } from '@/lib/format-money';
 import { parseTndToMillimes } from '@/lib/parse-money';
@@ -46,7 +46,7 @@ export default function EditTransactionScreen() {
 
 function EditTransactionForm({ transaction }: { transaction: Transaction }) {
   const router = useRouter();
-  const { updateTransaction, deleteTransaction, accounts } = useTransactions();
+  const { updateTransaction, deleteTransaction, accounts, customCategories } = useTransactions();
   const [type, setType] = useState<'income' | 'expense'>(
     transaction.type === 'income' ? 'income' : 'expense',
   );
@@ -63,8 +63,10 @@ function EditTransactionForm({ transaction }: { transaction: Transaction }) {
 
   const changeType = (nextType: 'income' | 'expense') => {
     setType(nextType);
-    if (nextType === 'income' && category !== 'salary' && category !== 'other') setCategory('salary');
-    if (nextType === 'expense' && category === 'salary') setCategory('food');
+    // Keep the current category if it also fits the new type (e.g. "Other"); otherwise pick a sensible default.
+    if (!isCategoryAllowedFor(category, nextType, customCategories)) {
+      setCategory(nextType === 'income' ? 'salary' : 'food');
+    }
   };
 
   const saveTransaction = async () => {
@@ -181,22 +183,7 @@ function EditTransactionForm({ transaction }: { transaction: Transaction }) {
             </ScrollView>
           </View>
 
-          <View style={styles.section}>
-            <Text variant="label">CATEGORY</Text>
-            <View style={styles.chips}>
-              {categories
-                .filter((item) => (type === 'income' ? item.id === 'salary' || item.id === 'other' : item.id !== 'salary'))
-                .map((item) => (
-                  <CategoryChip
-                    key={item.id}
-                    label={item.label}
-                    emoji={item.emoji}
-                    selected={category === item.id}
-                    onPress={() => setCategory(item.id)}
-                  />
-                ))}
-            </View>
-          </View>
+          <CategoryPicker kind={type} value={category} onChange={setCategory} />
 
           <TransactionDateInput value={occurredAt} onChange={setOccurredAt} />
 
@@ -238,7 +225,6 @@ const styles = StyleSheet.create({
   accountEmoji: { fontSize: 14 },
   accountName: { fontSize: 12, fontWeight: '600', color: colors.textMuted },
   accountNameSelected: { color: colors.primaryDark, fontWeight: '700' },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   transferCard: { gap: 10, padding: 16 },
   transferHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   transferTitle: { fontSize: 16, fontWeight: '800', color: colors.text },

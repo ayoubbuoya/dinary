@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type PropsWithChildren } from 'react';
 import { useSQLiteContext } from 'expo-sqlite';
-import { categoryFor } from '@/constants/categories';
+import { MAX_CATEGORY_NAME_LENGTH, categoryFor, customCategoryEmojis } from '@/constants/categories';
 import { accountConfigFor } from '@/constants/accounts';
 import { getLocalMonthKey } from '@/lib/date';
 import { createBackup, exportTransactionsCsv } from '@/lib/transaction-export';
@@ -9,6 +9,7 @@ import type { Transaction, TransactionCategory, TransactionType } from '@/types/
 import type { Account, AccountType } from '@/types/account';
 import type { RecurringRule, SalaryRuleInput } from '@/types/recurring';
 import type { CategoryBudget } from '@/types/budget';
+import type { CategoryKind, CustomCategory } from '@/types/category';
 
 export type NewTransaction = {
   accountId?: string;
@@ -69,12 +70,27 @@ type CategoryBudgetRow = {
   updated_at: string;
 };
 
+type CustomCategoryRow = {
+  id: CustomCategory['id'];
+  name: string;
+  emoji: string;
+  kind: CategoryKind;
+  created_at: string;
+};
+
+export type NewCustomCategory = {
+  name: string;
+  emoji?: string;
+  kind: CategoryKind;
+};
+
 type TransactionStore = {
   transactions: Transaction[];
   accounts: Account[];
   accountBalances: Record<string, number>;
   recurringRules: RecurringRule[];
   categoryBudgets: CategoryBudget[];
+  customCategories: CustomCategory[];
   salaryRule?: RecurringRule;
   balanceMillimes: number;
   monthIncomeMillimes: number;
@@ -89,6 +105,8 @@ type TransactionStore = {
   confirmSalaryPayment: (salaryRule: RecurringRule, confirmedDate?: Date) => Promise<void>;
   setCategoryBudget: (category: TransactionCategory, amountMillimes: number, monthKey?: string) => Promise<void>;
   deleteCategoryBudget: (id: string) => Promise<void>;
+  /** Creates a category, or returns the existing one when the same name already exists for that kind. */
+  addCustomCategory: (input: NewCustomCategory) => Promise<CustomCategory>;
   updateAccountOpeningBalance: (accountId: string, openingBalanceMillimes: number) => Promise<void>;
   exportCsv: () => Promise<void>;
   backupData: () => Promise<void>;
@@ -121,10 +139,11 @@ export function TransactionProvider({ children }: PropsWithChildren) {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [recurringRules, setRecurringRules] = useState<RecurringRule[]>([]);
   const [categoryBudgets, setCategoryBudgets] = useState<CategoryBudget[]>([]);
+  const [customCategories, setCustomCategories] = useState<CustomCategory[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   const refreshData = useCallback(async () => {
-    const [txnRows, accRows, recRows, budRows] = await Promise.all([
+    const [txnRows, accRows, recRows, budRows, customRows] = await Promise.all([
       db.getAllAsync<TransactionRow>(
         "SELECT id, account_id, type, amount_millimes, category, title, note, transfer_group_id, occurred_at, source FROM transactions WHERE status = 'confirmed' ORDER BY occurred_at DESC",
       ),
@@ -136,6 +155,9 @@ export function TransactionProvider({ children }: PropsWithChildren) {
       ),
       db.getAllAsync<CategoryBudgetRow>(
         'SELECT id, category, amount_millimes, month_key, created_at, updated_at FROM category_budgets ORDER BY created_at ASC',
+      ),
+      db.getAllAsync<CustomCategoryRow>(
+        'SELECT id, name, emoji, kind, created_at FROM custom_categories ORDER BY created_at ASC',
       ),
     ]);
 
@@ -173,6 +195,9 @@ export function TransactionProvider({ children }: PropsWithChildren) {
         updatedAt: row.updated_at,
       })),
     );
+    setCustomCategories(
+      customRows.map((row) => ({ id: row.id, name: row.name, emoji: row.emoji, kind: row.kind, createdAt: row.created_at })),
+    );
   }, [db]);
 
 
@@ -189,7 +214,8 @@ export function TransactionProvider({ children }: PropsWithChildren) {
 
   const addTransaction = useCallback(async (transaction: NewTransaction) => {
     const now = new Date().toISOString();
-    const category = categoryFor(transaction.category);
+    // The title stores the category name at save time, so custom names show in lists and CSV exports.
+    const category = categoryFor(transaction.category, customCategories);
     const targetAccountId = transaction.accountId || 'cash';
     const record: Transaction = {
       id: `txn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -210,7 +236,7 @@ export function TransactionProvider({ children }: PropsWithChildren) {
       record.note ?? null, record.occurredAt, 'manual', 'confirmed', now, now,
     );
     setTransactions((current) => [record, ...current].sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime()));
-  }, [db]);
+  }, [customCategories, db]);
 
   const addTransfer = useCallback(async (transfer: NewTransfer) => {
     const fromAccount = accounts.find((a) => a.id === transfer.fromAccountId) ?? accountConfigFor(transfer.fromAccountId);
@@ -263,7 +289,7 @@ export function TransactionProvider({ children }: PropsWithChildren) {
   }, [accounts, db]);
 
   const updateTransaction = useCallback(async (id: string, transaction: NewTransaction) => {
-    const category = categoryFor(transaction.category);
+    const category = categoryFor(transaction.category, customCategories);
     const title = transaction.type === 'income' && transaction.category === 'salary' ? 'Monthly salary' : category.label;
     const updatedAt = new Date().toISOString();
     const targetAccountId = transaction.accountId || 'cash';
@@ -295,7 +321,7 @@ export function TransactionProvider({ children }: PropsWithChildren) {
         )
         .sort((first, second) => new Date(second.occurredAt).getTime() - new Date(first.occurredAt).getTime()),
     );
-  }, [db]);
+  }, [customCategories, db]);
 
   const deleteTransaction = useCallback(async (id: string) => {
     const target = transactions.find((t) => t.id === id);
@@ -438,6 +464,37 @@ export function TransactionProvider({ children }: PropsWithChildren) {
     setCategoryBudgets((current) => current.filter((b) => b.id !== id));
   }, [db]);
 
+  const addCustomCategory = useCallback(async (input: NewCustomCategory) => {
+    // Collapse repeated spaces so "My  Gym " and "My Gym" are treated as the same name.
+    const name = input.name.trim().replace(/\s+/g, ' ');
+    if (!name) throw new Error('Enter a category name.');
+    if (name.length > MAX_CATEGORY_NAME_LENGTH) {
+      throw new Error(`Keep the name under ${MAX_CATEGORY_NAME_LENGTH} characters.`);
+    }
+
+    // Reuse an existing category instead of creating a duplicate (case-insensitive).
+    const existing = customCategories.find(
+      (category) => category.kind === input.kind && category.name.toLowerCase() === name.toLowerCase(),
+    );
+    if (existing) return existing;
+
+    const now = new Date().toISOString();
+    const created: CustomCategory = {
+      id: `custom_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      name,
+      emoji: input.emoji || customCategoryEmojis[0],
+      kind: input.kind,
+      createdAt: now,
+    };
+
+    await db.runAsync(
+      'INSERT INTO custom_categories (id, name, emoji, kind, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+      created.id, created.name, created.emoji, created.kind, now, now,
+    );
+    setCustomCategories((current) => [...current, created]);
+    return created;
+  }, [customCategories, db]);
+
   const updateAccountOpeningBalance = useCallback(async (accountId: string, openingBalanceMillimes: number) => {
     const now = new Date().toISOString();
     await db.runAsync(
@@ -483,6 +540,7 @@ export function TransactionProvider({ children }: PropsWithChildren) {
       accountBalances,
       recurringRules,
       categoryBudgets,
+      customCategories,
       salaryRule,
       balanceMillimes: totalBalanceMillimes,
       monthIncomeMillimes: currentMonthTransactions.filter((transaction) => transaction.type === 'income').reduce((total, transaction) => total + transaction.amountMillimes, 0),
@@ -497,11 +555,12 @@ export function TransactionProvider({ children }: PropsWithChildren) {
       confirmSalaryPayment,
       setCategoryBudget,
       deleteCategoryBudget,
+      addCustomCategory,
       updateAccountOpeningBalance,
       exportCsv: () => exportTransactionsCsv(transactions),
       backupData: async () => createBackup(await getBackupSnapshot(db)),
     };
-  }, [accounts, addTransaction, addTransfer, categoryBudgets, confirmSalaryPayment, db, deleteCategoryBudget, deleteSalaryRule, deleteTransaction, isLoading, recurringRules, salaryRule, saveSalaryRule, setCategoryBudget, transactions, updateAccountOpeningBalance, updateTransaction]);
+  }, [accounts, addCustomCategory, addTransaction, addTransfer, categoryBudgets, customCategories, confirmSalaryPayment, db, deleteCategoryBudget, deleteSalaryRule, deleteTransaction, isLoading, recurringRules, salaryRule, saveSalaryRule, setCategoryBudget, transactions, updateAccountOpeningBalance, updateTransaction]);
 
 
 
@@ -512,6 +571,12 @@ export function useTransactions() {
   const store = useContext(TransactionContext);
   if (!store) throw new Error('useTransactions must be used within TransactionProvider');
   return store;
+}
+
+/** Returns a `categoryFor` that also knows the user's custom categories. */
+export function useCategoryFor() {
+  const { customCategories } = useTransactions();
+  return useCallback((id: TransactionCategory) => categoryFor(id, customCategories), [customCategories]);
 }
 
 

@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { CategoryChip } from '@/components/finance/CategoryChip';
+import { CategoryPicker } from '@/components/finance/CategoryPicker';
 import { TransactionDateInput } from '@/components/finance/TransactionDateInput';
 import { Screen } from '@/components/layout/Screen';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Text } from '@/components/ui/Text';
-import { categories } from '@/constants/categories';
+import { isCategoryAllowedFor } from '@/constants/categories';
 import { colors, radius } from '@/constants/colors';
 import type { TransactionCategory, TransactionType } from '@/types/transaction';
 import { useTransactions } from '@/features/transactions/transaction-store';
@@ -23,7 +23,7 @@ export default function AddTransactionScreen() {
     accountId?: string;
   }>();
 
-  const { addTransaction, addTransfer, accounts } = useTransactions();
+  const { addTransaction, addTransfer, accounts, customCategories } = useTransactions();
 
   const initialType: TransactionType =
     params.type === 'income' || params.type === 'transfer' ? params.type : 'expense';
@@ -45,10 +45,9 @@ export default function AddTransactionScreen() {
   const changeType = (nextType: TransactionType) => {
     setType(nextType);
     setFormError(undefined);
-    if (nextType === 'income' && category !== 'salary' && category !== 'other') {
-      setCategory('salary');
-    } else if (nextType === 'expense' && category === 'salary') {
-      setCategory('food');
+    // Keep the current category if it also fits the new type (e.g. "Other"); otherwise pick a sensible default.
+    if (nextType !== 'transfer' && !isCategoryAllowedFor(category, nextType, customCategories)) {
+      setCategory(nextType === 'income' ? 'salary' : 'food');
     }
   };
 
@@ -230,30 +229,14 @@ export default function AddTransactionScreen() {
             </ScrollView>
           </View>
 
-          {/* Category Chips */}
-          <View style={styles.section}>
-            <Text variant="label">CATEGORY</Text>
-            <View style={styles.chips}>
-              {categories
-                .filter((item) =>
-                  type === 'income'
-                    ? item.id === 'salary' || item.id === 'other'
-                    : item.id !== 'salary',
-                )
-                .map((item) => (
-                  <CategoryChip
-                    key={item.id}
-                    label={item.label}
-                    emoji={item.emoji}
-                    selected={category === item.id}
-                    onPress={() => {
-                      setCategory(item.id);
-                      setFormError(undefined);
-                    }}
-                  />
-                ))}
-            </View>
-          </View>
+          <CategoryPicker
+            kind={type === 'income' ? 'income' : 'expense'}
+            value={category}
+            onChange={(nextCategory) => {
+              setCategory(nextCategory);
+              setFormError(undefined);
+            }}
+          />
         </>
       )}
 
@@ -299,6 +282,5 @@ const styles = StyleSheet.create({
   accountEmoji: { fontSize: 14 },
   accountName: { fontSize: 12, fontWeight: '600', color: colors.textMuted },
   accountNameSelected: { color: colors.primaryDark, fontWeight: '700' },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   formError: { color: colors.expense, fontWeight: '600' },
 });
