@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Calendar, CheckCircle2, Trash2 } from 'lucide-react-native';
 import { Screen } from '@/components/layout/Screen';
@@ -15,6 +15,7 @@ import { useTransactions } from '@/features/transactions/transaction-store';
 import { getNextPayday, getDaysUntilPayday } from '@/lib/salary';
 import type { RecurringRule } from '@/types/recurring';
 import type { Account } from '@/types/account';
+import { showAlert } from '@/lib/alert';
 
 export default function SalaryScreen() {
   const { salaryRule, accounts, transactions, saveSalaryRule, deleteSalaryRule } = useTransactions();
@@ -118,13 +119,13 @@ function SalaryForm({ salaryRule, accounts, onSave, onDelete }: SalaryFormProps)
         description: description.trim() || 'Monthly salary',
         isActive: true,
       });
-      Alert.alert(
+      showAlert(
         'Salary Rule Saved',
         `Expected salary of ${formatMoney(amountMillimes)} on day ${dayNum} is now configured.`,
         [{ text: 'OK', onPress: () => router.navigate('/') }],
       );
     } catch (error) {
-      Alert.alert('Save Failed', error instanceof Error ? error.message : 'Please try again.');
+      showAlert('Save Failed', error instanceof Error ? error.message : 'Please try again.');
     } finally {
       setIsSaving(false);
     }
@@ -132,7 +133,7 @@ function SalaryForm({ salaryRule, accounts, onSave, onDelete }: SalaryFormProps)
 
   const confirmDelete = () => {
     if (!salaryRule) return;
-    Alert.alert(
+    showAlert(
       'Remove Salary Rule?',
       'This will remove your recurring salary rule and payday countdown. Past recorded salary transactions will remain safe.',
       [
@@ -144,7 +145,9 @@ function SalaryForm({ salaryRule, accounts, onSave, onDelete }: SalaryFormProps)
             setIsDeleting(true);
             try {
               await onDelete(salaryRule.id);
-              Alert.alert('Rule Removed', 'Your salary rule has been removed.');
+              showAlert('Rule Removed', 'Your salary rule has been removed.');
+            } catch (error) {
+              showAlert('Remove failed', error instanceof Error ? error.message : 'Please try again.');
             } finally {
               setIsDeleting(false);
             }

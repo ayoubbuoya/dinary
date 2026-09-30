@@ -1,3 +1,12 @@
+# Dinary
+
+Personal TND wallet for Android, iOS and the web. Data is stored in MongoDB Atlas behind a small API that runs on Vercel, and the website is protected by a password.
+
+- Setup (Atlas, Vercel, phone, moving old phone data): [docs/cloud-setup.md](docs/cloud-setup.md)
+- Why it works this way: [docs/decisions/0002-mongodb-atlas-and-web.md](docs/decisions/0002-mongodb-atlas-and-web.md)
+
+---
+
 # Welcome to your Expo app 👋
 
 This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).

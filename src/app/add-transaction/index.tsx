@@ -110,7 +110,7 @@ export default function AddTransactionScreen() {
     <Screen>
       <View style={styles.header}>
         <Text variant="title">Add transaction</Text>
-        <Text variant="caption">Saved privately on this device.</Text>
+        <Text variant="caption">Saved to your private cloud database.</Text>
       </View>
 
       {/* 3-way Type Switcher */}

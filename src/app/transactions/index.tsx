@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Download, HardDriveUpload, Search, X } from 'lucide-react-native';
+import { DatabaseBackup, Download, Search, X } from 'lucide-react-native';
 import { Screen } from '@/components/layout/Screen';
 import { CategoryChip } from '@/components/finance/CategoryChip';
 import { TransactionItem } from '@/components/finance/TransactionItem';
@@ -16,13 +16,14 @@ import { getLocalMonthKey, formatMonthYear } from '@/lib/date';
 import { formatMoney } from '@/lib/format-money';
 import { EmptyState } from '@/components/ui/EmptyState';
 import type { TransactionCategory } from '@/types/transaction';
+import { showAlert } from '@/lib/alert';
 
 type PeriodFilter = 'this_month' | 'last_month' | 'all';
 type TypeFilter = 'all' | 'expense' | 'income' | 'transfer';
 
 export default function TransactionsScreen() {
   const router = useRouter();
-  const { transactions, customCategories, exportCsv, backupData, isLoading } = useTransactions();
+  const { transactions, customCategories, exportCsv, isLoading, loadError, reload } = useTransactions();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<TransactionCategory | 'all'>('all');
@@ -93,7 +94,7 @@ export default function TransactionsScreen() {
     try {
       await action();
     } catch (error) {
-      Alert.alert('Export unavailable', error instanceof Error ? error.message : 'Please try again on your device.');
+      showAlert('Export unavailable', error instanceof Error ? error.message : 'Please try again on your device.');
     }
   };
 
@@ -112,7 +113,7 @@ export default function TransactionsScreen() {
         </View>
         <View style={styles.headerActions}>
           <ExportAction label="CSV" Icon={Download} onPress={() => void share(exportCsv)} />
-          <ExportAction label="Backup" Icon={HardDriveUpload} onPress={() => void share(backupData)} />
+          <ExportAction label="Backup" accessibilityLabel="Open backup and data" Icon={DatabaseBackup} onPress={() => router.navigate('/backup')} />
         </View>
       </View>
 
@@ -195,11 +196,17 @@ export default function TransactionsScreen() {
 
       {/* Transactions List */}
       {isLoading ? (
-        <Text variant="caption">Loading your local data…</Text>
+        <Text variant="caption">Loading your data…</Text>
+      ) : loadError ? (
+        <EmptyState
+          title="Could not load your data"
+          description={loadError}
+          action={<Button variant="secondary" size="sm" onPress={() => void reload()}>Try again</Button>}
+        />
       ) : transactions.length === 0 ? (
         <EmptyState
           title="No transactions yet"
-          description="Your local database is ready. Add an expense or income to begin."
+          description="Add an expense or income to begin, or import your old phone data from Backup."
         />
       ) : filteredTransactions.length === 0 ? (
         <View style={styles.emptyFilterContainer}>
@@ -233,9 +240,9 @@ export default function TransactionsScreen() {
   );
 }
 
-function ExportAction({ label, Icon, onPress }: { label: string; Icon: typeof Download; onPress: () => void }) {
+function ExportAction({ label, accessibilityLabel, Icon, onPress }: { label: string; accessibilityLabel?: string; Icon: typeof Download; onPress: () => void }) {
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel={`Export ${label}`} onPress={onPress} style={({ pressed }) => [styles.exportAction, pressed && styles.pressed]}>
+    <Pressable accessibilityRole="button" accessibilityLabel={accessibilityLabel ?? `Export ${label}`} onPress={onPress} style={({ pressed }) => [styles.exportAction, pressed && styles.pressed]}>
       <Icon size={17} color={colors.primary} />
       <Text variant="caption" style={styles.exportLabel}>{label}</Text>
     </Pressable>

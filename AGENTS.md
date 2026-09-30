@@ -3,7 +3,7 @@
 ## Source of truth
 
 - Read `docs/frontend-foundation.md` before frontend work and `docs/product-spec.md` before work that touches product behavior, data, privacy, voice, AI, sync, or financial calculations.
-- The current implementation phase is a **local SQLite app**: persist product data on-device with Expo SQLite. Do not add Supabase, authentication, cloud databases, remote backup/sync, real voice recording/transcription, or AI-model execution unless the task explicitly moves the project beyond this phase.
+- The current implementation phase is a **single-owner cloud app** (see `docs/decisions/0002-mongodb-atlas-and-web.md`): product data lives in MongoDB Atlas behind the Dinary API (Expo Router API routes deployed on Vercel), shared by the phone app and the website. Do not add multi-user accounts, third-party auth, other cloud databases, real voice recording/transcription, or AI-model execution unless the task explicitly moves the project beyond this phase.
 - Preserve the existing Expo project. Do not re-initialize it or move Expo Router routes solely to match a suggested directory tree.
 
 ## Expo SDK 57
@@ -30,15 +30,17 @@
 - Use the device timezone when assigning transactions to reporting months. Expected recurring income affects forecasts only; it must not affect actual balance until confirmed.
 - Any future voice or assistant-created transaction must be a reviewable draft. Missing amount/type or low-confidence fields block confirmation; AI must never directly mutate financial records.
 
-## Local data, privacy, and security work
+## Data, privacy, and security work
 
-- Expo SQLite is the sole operational source of truth for now. Do not add any remote database, backend, cloud backup, synchronization, authentication, or network-dependent data flow unless the user explicitly changes this local-only policy.
-- Local export and backup files are user-initiated and must remain on-device until the user explicitly chooses a destination through the operating-system share sheet.
-- Any future cloud sync is authenticated backup/multi-device synchronization and must not block normal offline use.
-- Never ship a Supabase service-role key. Every client-exposed user-owned cloud table requires Row Level Security based on `auth.uid() = user_id`; do not trust an app-supplied user ID alone.
+- MongoDB Atlas is the operational source of truth. Only server code in `src/server/` and `src/app/api/**/+api.ts` may talk to MongoDB. Never import `src/server/` from screens or components, and never expose `MONGODB_URI`, `DINARY_PASSWORD`, or `DINARY_SESSION_SECRET` with an `EXPO_PUBLIC_` prefix.
+- Every API route except login/logout must call `requireSession` (use `withSession`). The website uses the HttpOnly session cookie; the phone stores its token only in `expo-secure-store`.
+- The server validates every write and decides IDs, titles, and timestamps. Store money in MongoDB as BSON 64-bit integers of millimes (`toMillimes`), never doubles.
+- The old on-device SQLite database (`src/features/legacy/`) is read-only legacy data used for "Old backup" export and the one-time copy to MongoDB. Do not write to it or delete it.
+- Export and backup files are user-initiated: on the phone they go through the operating-system share sheet, on the website through a normal browser download.
+- If multi-user support is ever added, every document needs an owner ID derived from the verified session, never from the request body.
 - Store sessions in secure device storage, request microphone permission only after the user starts voice entry, and do not upload raw audio or transcripts by default.
 - Keep AI grounded in typed, bounded, read-only analytics facts. Calculations belong in code/queries; the model may explain them but must not invent figures or provide regulated financial advice.
-- Add automated tests when changing balance calculations, recurring-rule dates, synchronization, or RLS policies. Record material technical decisions as short ADRs under `docs/decisions/`.
+- Add automated tests when changing balance calculations, recurring-rule dates, API routes, backup import rules, or authentication. Extend `scripts/api-smoke-test.mjs` (`npm run test:api`, against a disposable `*_test` database) for API changes. Record material technical decisions as short ADRs under `docs/decisions/`.
 
 ## Verification
 

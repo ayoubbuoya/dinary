@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeftRight } from 'lucide-react-native';
 import { CategoryPicker } from '@/components/finance/CategoryPicker';
@@ -16,6 +16,7 @@ import { formatMoney } from '@/lib/format-money';
 import { parseTndToMillimes } from '@/lib/parse-money';
 import { useTransactions } from '@/features/transactions/transaction-store';
 import type { Transaction, TransactionCategory } from '@/types/transaction';
+import { showAlert } from '@/lib/alert';
 
 export default function EditTransactionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -87,7 +88,7 @@ function EditTransactionForm({ transaction }: { transaction: Transaction }) {
       });
       router.replace('/transactions');
     } catch (error) {
-      Alert.alert('Update failed', error instanceof Error ? error.message : 'Please try again.');
+      showAlert('Update failed', error instanceof Error ? error.message : 'Please try again.');
     } finally {
       setIsSaving(false);
     }
@@ -98,7 +99,7 @@ function EditTransactionForm({ transaction }: { transaction: Transaction }) {
       ? `Deleting this transfer (${formatMoney(transaction.amountMillimes)}) will remove both legs of the transfer across accounts.`
       : `${transaction.title} (${formatMoney(transaction.amountMillimes)}) will be removed from your balance and analytics.`;
 
-    Alert.alert('Delete transaction?', message, [
+    showAlert('Delete transaction?', message, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: () => void removeTransaction() },
     ]);
@@ -110,7 +111,7 @@ function EditTransactionForm({ transaction }: { transaction: Transaction }) {
       await deleteTransaction(transaction.id);
       router.replace('/transactions');
     } catch (error) {
-      Alert.alert('Delete failed', error instanceof Error ? error.message : 'Please try again.');
+      showAlert('Delete failed', error instanceof Error ? error.message : 'Please try again.');
     } finally {
       setIsDeleting(false);
     }
@@ -120,7 +121,7 @@ function EditTransactionForm({ transaction }: { transaction: Transaction }) {
     <Screen>
       <View style={styles.header}>
         <Text variant="title">{isTransfer ? 'Transfer details' : 'Edit transaction'}</Text>
-        <Text variant="caption">Changes are saved only on this device.</Text>
+        <Text variant="caption">Changes are saved to your private cloud database.</Text>
       </View>
 
       {isTransfer ? (

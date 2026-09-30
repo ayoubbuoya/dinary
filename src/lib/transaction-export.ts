@@ -1,29 +1,12 @@
-import { File, Paths } from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
 import { categoryFor } from '@/constants/categories';
 import { formatMoney } from '@/lib/format-money';
+import { shareFile } from '@/lib/share-file';
+import type { BackupFile } from '@/types/api';
 import type { CustomCategory } from '@/types/category';
 import type { Transaction } from '@/types/transaction';
 
-type BackupPayload = {
-  format: 'dinary-backup';
-  version: 1;
-  createdAt: string;
-  data: unknown;
-};
-
 function escapeCsv(value: string) {
   return `"${value.replaceAll('"', '""')}"`;
-}
-
-async function shareFile(filename: string, content: string, mimeType: string, UTI: string) {
-  if (!(await Sharing.isAvailableAsync())) {
-    throw new Error('File sharing is available on Android and iOS.');
-  }
-
-  const file = new File(Paths.cache, filename);
-  file.write(content);
-  await Sharing.shareAsync(file.uri, { dialogTitle: 'Export Dinary data', mimeType, UTI });
 }
 
 export async function exportTransactionsCsv(transactions: Transaction[], customCategories: CustomCategory[] = []) {
@@ -44,7 +27,7 @@ export async function exportTransactionsCsv(transactions: Transaction[], customC
   await shareFile(`dinary-transactions-${Date.now()}.csv`, rows.join('\n'), 'text/csv', 'public.comma-separated-values-text');
 }
 
-export async function createBackup(data: unknown) {
-  const backup: BackupPayload = { format: 'dinary-backup', version: 1, createdAt: new Date().toISOString(), data };
-  await shareFile(`dinary-backup-${Date.now()}.json`, JSON.stringify(backup, null, 2), 'application/json', 'public.json');
+/** Saves a backup as a JSON file. The name says which kind it is: `phone` (old SQLite) or `cloud` (MongoDB). */
+export async function saveBackupFile(backup: BackupFile, kind: 'phone' | 'cloud') {
+  await shareFile(`dinary-${kind}-backup-${Date.now()}.json`, JSON.stringify(backup, null, 2), 'application/json', 'public.json');
 }

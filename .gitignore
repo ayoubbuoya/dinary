@@ -30,8 +30,12 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
+# local env files (they hold the MongoDB URI and the password)
+.env
 .env*.local
+
+# Vercel
+.vercel
 
 # typescript
 *.tsbuildinfo

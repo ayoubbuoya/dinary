@@ -1,5 +1,5 @@
 import { useCallback, useState, useRef } from 'react';
-import { Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { FlatList, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { Bot, Plus, Send, ShieldCheck, Sparkles, Target } from 'lucide-react-native';
 import { Screen } from '@/components/layout/Screen';
 import { Card } from '@/components/ui/Card';
@@ -15,6 +15,7 @@ import { useTransactions } from '@/features/transactions/transaction-store';
 import { extractFinancialFacts } from '@/lib/financial-facts';
 import { processHsebliQuery } from '@/lib/hsebli-engine';
 import type { TransactionCategory } from '@/types/transaction';
+import { showAlert } from '@/lib/alert';
 
 const quickPrompts = [
   { label: '📊 Where did my money go?', query: 'Where did my money go this month?' },
@@ -109,7 +110,7 @@ export default function AssistantScreen() {
   const handleSaveBudget = useCallback(async () => {
     const millimes = parseTndToMillimes(budgetAmountInput);
     if (!millimes || millimes <= 0) {
-      Alert.alert('Invalid Amount', 'Please enter a valid budget amount in TND.');
+      showAlert('Invalid Amount', 'Please enter a valid budget amount in TND.');
       return;
     }
 
@@ -118,7 +119,9 @@ export default function AssistantScreen() {
       await setCategoryBudget(selectedBudgetCat, millimes);
       setShowBudgetModal(false);
       setBudgetAmountInput('');
-      Alert.alert('Budget Set', `Monthly budget for ${selectedBudgetCat} set to ${formatMoney(millimes)}.`);
+      showAlert('Budget Set', `Monthly budget for ${selectedBudgetCat} set to ${formatMoney(millimes)}.`);
+    } catch (error) {
+      showAlert('Budget not saved', error instanceof Error ? error.message : 'Please try again.');
     } finally {
       setIsSettingBudget(false);
     }
