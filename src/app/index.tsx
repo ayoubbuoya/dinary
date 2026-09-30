@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { ArrowLeftRight, ArrowRight, Bot, CirclePlus, ReceiptText, SlidersHorizontal, WalletCards } from 'lucide-react-native';
-import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { BalanceCard } from '@/components/finance/BalanceCard';
 import { MonthSummaryCard } from '@/components/finance/MonthSummaryCard';
 import { TransactionItem } from '@/components/finance/TransactionItem';
@@ -25,6 +25,7 @@ import { formatMoney } from '@/lib/format-money';
 import { useTransactions } from '@/features/transactions/transaction-store';
 import { extractFinancialFacts } from '@/lib/financial-facts';
 import { calculateSafeDailySpend, getDaysUntilPayday, isPaydayDueForConfirmation } from '@/lib/salary';
+import { showAlert } from '@/lib/alert';
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -41,6 +42,8 @@ export default function HomeScreen() {
     confirmSalaryPayment,
     updateAccountOpeningBalance,
     isLoading,
+    loadError,
+    reload,
   } = useTransactions();
 
   const [isPaydayDismissed, setIsPaydayDismissed] = useState(false);
@@ -94,12 +97,12 @@ export default function HomeScreen() {
     setIsConfirmingSalary(true);
     try {
       await confirmSalaryPayment(salaryRule);
-      Alert.alert(
+      showAlert(
         'Salary Confirmed! 🎉',
         `${formatMoney(salaryRule.amountMillimes)} has been added to your balance.`,
       );
     } catch (error) {
-      Alert.alert('Confirmation failed', error instanceof Error ? error.message : 'Please try again.');
+      showAlert('Confirmation failed', error instanceof Error ? error.message : 'Please try again.');
     } finally {
       setIsConfirmingSalary(false);
     }
@@ -109,7 +112,7 @@ export default function HomeScreen() {
     for (const [accId, millimes] of Object.entries(balances)) {
       await updateAccountOpeningBalance(accId, millimes);
     }
-    Alert.alert('Balances Updated', 'Your starting account balances have been saved.');
+    showAlert('Balances Updated', 'Your starting account balances have been saved.');
   }, [updateAccountOpeningBalance]);
 
   return (
@@ -119,9 +122,14 @@ export default function HomeScreen() {
           <Text variant="caption">{formatToday(now)}</Text>
           <Text variant="title">Dinary</Text>
         </View>
-        <View style={styles.avatar}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open backup and data"
+          onPress={() => router.navigate('/backup')}
+          style={({ pressed }) => [styles.avatar, pressed && styles.avatarPressed]}
+        >
           <Text style={styles.avatarText}>D</Text>
-        </View>
+        </Pressable>
       </View>
 
       <View style={styles.intro}>
@@ -256,7 +264,13 @@ export default function HomeScreen() {
       </View>
 
       {isLoading ? (
-        <Text variant="caption">Loading your local data…</Text>
+        <Text variant="caption">Loading your data…</Text>
+      ) : loadError ? (
+        <EmptyState
+          title="Could not load your data"
+          description={loadError}
+          action={<Pressable accessibilityRole="button" onPress={() => void reload()}><Text style={styles.viewAllText}>Try again</Text></Pressable>}
+        />
       ) : transactions.length === 0 ? (
         <EmptyState
           title="No transactions yet"
@@ -307,6 +321,7 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primarySoft },
   avatarText: { color: colors.primary, fontWeight: '800' },
+  avatarPressed: { opacity: 0.7 },
   intro: { gap: 2 },
   accountsSection: { gap: 8 },
   accountsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },

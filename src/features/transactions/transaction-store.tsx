@@ -1,88 +1,16 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type PropsWithChildren } from 'react';
-import { useSQLiteContext } from 'expo-sqlite';
-import { MAX_CATEGORY_NAME_LENGTH, categoryFor, customCategoryEmojis } from '@/constants/categories';
-import { accountConfigFor } from '@/constants/accounts';
+import { categoryFor } from '@/constants/categories';
+import { apiRequest } from '@/lib/api-client';
 import { getLocalMonthKey } from '@/lib/date';
-import { createBackup, exportTransactionsCsv } from '@/lib/transaction-export';
-import { getBackupSnapshot } from '@/features/transactions/database';
-import type { Transaction, TransactionCategory, TransactionType } from '@/types/transaction';
-import type { Account, AccountType } from '@/types/account';
+import { exportTransactionsCsv, saveBackupFile } from '@/lib/transaction-export';
+import type { BackupFile, FinanceSnapshot, ImportSummary, NewCustomCategory, NewTransaction, NewTransfer } from '@/types/api';
+import type { Transaction, TransactionCategory } from '@/types/transaction';
+import type { Account } from '@/types/account';
 import type { RecurringRule, SalaryRuleInput } from '@/types/recurring';
 import type { CategoryBudget } from '@/types/budget';
-import type { CategoryKind, CustomCategory } from '@/types/category';
+import type { CustomCategory } from '@/types/category';
 
-export type NewTransaction = {
-  accountId?: string;
-  type: Extract<TransactionType, 'income' | 'expense'>;
-  amountMillimes: number;
-  category: TransactionCategory;
-  note?: string;
-  occurredAt: string;
-};
-
-export type NewTransfer = {
-  fromAccountId: string;
-  toAccountId: string;
-  amountMillimes: number;
-  note?: string;
-  occurredAt: string;
-};
-
-type TransactionRow = {
-  id: string;
-  account_id: string;
-  type: TransactionType;
-  amount_millimes: number;
-  category: TransactionCategory;
-  title: string;
-  note: string | null;
-  transfer_group_id: string | null;
-  occurred_at: string;
-  source: string;
-};
-
-type AccountRow = {
-  id: string;
-  name: string;
-  type: AccountType;
-  opening_balance_millimes: number;
-  is_archived: number;
-};
-
-type RecurringRow = {
-  id: string;
-  type: 'income' | 'expense';
-  amount_millimes: number | null;
-  account_id: string;
-  day_of_month: number;
-  description: string;
-  is_active: number;
-  created_at: string;
-  updated_at: string;
-};
-
-type CategoryBudgetRow = {
-  id: string;
-  category: TransactionCategory;
-  amount_millimes: number;
-  month_key: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type CustomCategoryRow = {
-  id: CustomCategory['id'];
-  name: string;
-  emoji: string;
-  kind: CategoryKind;
-  created_at: string;
-};
-
-export type NewCustomCategory = {
-  name: string;
-  emoji?: string;
-  kind: CategoryKind;
-};
+export type { NewCustomCategory, NewTransaction, NewTransfer } from '@/types/api';
 
 type TransactionStore = {
   transactions: Transaction[];
@@ -96,6 +24,9 @@ type TransactionStore = {
   monthIncomeMillimes: number;
   monthExpenseMillimes: number;
   isLoading: boolean;
+  /** Set when the data could not be loaded from the server. */
+  loadError?: string;
+  reload: () => Promise<void>;
   addTransaction: (transaction: NewTransaction) => Promise<void>;
   addTransfer: (transfer: NewTransfer) => Promise<void>;
   updateTransaction: (id: string, transaction: NewTransaction) => Promise<void>;
@@ -109,402 +40,142 @@ type TransactionStore = {
   addCustomCategory: (input: NewCustomCategory) => Promise<CustomCategory>;
   updateAccountOpeningBalance: (accountId: string, openingBalanceMillimes: number) => Promise<void>;
   exportCsv: () => Promise<void>;
-  backupData: () => Promise<void>;
+  /** Saves a full MongoDB backup file (the "new" backup). */
+  downloadCloudBackup: () => Promise<void>;
+  /** Imports an old phone backup or a cloud backup into MongoDB, then reloads the data. */
+  importBackup: (backup: BackupFile) => Promise<ImportSummary>;
 };
-
-
-
-
 
 const TransactionContext = createContext<TransactionStore | null>(null);
 
-function mapRow(row: TransactionRow): Transaction {
-  return {
-    id: row.id,
-    accountId: row.account_id,
-    type: row.type,
-    amountMillimes: row.amount_millimes,
-    category: row.category,
-    title: row.title,
-    note: row.note ?? undefined,
-    source: row.source,
-    transferGroupId: row.transfer_group_id ?? undefined,
-    occurredAt: row.occurred_at,
-  };
-}
+const byNewestFirst = (a: Transaction, b: Transaction) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime();
 
+/**
+ * Holds the owner's financial data in memory for the screens.
+ * MongoDB (through the Dinary API) is the source of truth: every change is sent to the server first,
+ * and the screen state is updated only with what the server saved and returned.
+ */
 export function TransactionProvider({ children }: PropsWithChildren) {
-  const db = useSQLiteContext();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [recurringRules, setRecurringRules] = useState<RecurringRule[]>([]);
   const [categoryBudgets, setCategoryBudgets] = useState<CategoryBudget[]>([]);
   const [customCategories, setCustomCategories] = useState<CustomCategory[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string>();
 
-  const refreshData = useCallback(async () => {
-    const [txnRows, accRows, recRows, budRows, customRows] = await Promise.all([
-      db.getAllAsync<TransactionRow>(
-        "SELECT id, account_id, type, amount_millimes, category, title, note, transfer_group_id, occurred_at, source FROM transactions WHERE status = 'confirmed' ORDER BY occurred_at DESC",
-      ),
-      db.getAllAsync<AccountRow>(
-        'SELECT id, name, type, opening_balance_millimes, is_archived FROM accounts WHERE is_archived = 0 ORDER BY created_at ASC',
-      ),
-      db.getAllAsync<RecurringRow>(
-        'SELECT id, type, amount_millimes, account_id, day_of_month, description, is_active, created_at, updated_at FROM recurring_rules ORDER BY created_at ASC',
-      ),
-      db.getAllAsync<CategoryBudgetRow>(
-        'SELECT id, category, amount_millimes, month_key, created_at, updated_at FROM category_budgets ORDER BY created_at ASC',
-      ),
-      db.getAllAsync<CustomCategoryRow>(
-        'SELECT id, name, emoji, kind, created_at FROM custom_categories ORDER BY created_at ASC',
-      ),
-    ]);
-
-    setTransactions(txnRows.map(mapRow));
-    setAccounts(
-      accRows.map((row) => ({
-        id: row.id,
-        name: row.name,
-        type: row.type,
-        openingBalanceMillimes: row.opening_balance_millimes,
-        isArchived: Boolean(row.is_archived),
-        emoji: accountConfigFor(row.id).emoji,
-      })),
-    );
-    setRecurringRules(
-      recRows.map((row) => ({
-        id: row.id,
-        type: row.type,
-        amountMillimes: row.amount_millimes ?? 0,
-        accountId: row.account_id,
-        dayOfMonth: row.day_of_month,
-        description: row.description,
-        isActive: Boolean(row.is_active),
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-      })),
-    );
-    setCategoryBudgets(
-      budRows.map((row) => ({
-        id: row.id,
-        category: row.category,
-        amountMillimes: row.amount_millimes,
-        monthKey: row.month_key ?? undefined,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-      })),
-    );
-    setCustomCategories(
-      customRows.map((row) => ({ id: row.id, name: row.name, emoji: row.emoji, kind: row.kind, createdAt: row.created_at })),
-    );
-  }, [db]);
-
+  /** Fetches everything from the server. State changes happen only after the request finishes. */
+  const loadSnapshot = useCallback(async () => {
+    try {
+      const snapshot = await apiRequest<FinanceSnapshot>('/api/data');
+      setTransactions(snapshot.transactions);
+      setAccounts(snapshot.accounts);
+      setRecurringRules(snapshot.recurringRules);
+      setCategoryBudgets(snapshot.categoryBudgets);
+      setCustomCategories(snapshot.customCategories);
+      setLoadError(undefined);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : 'Could not load your data.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    async function load() {
-      try {
-        await refreshData();
-      } finally {
-        setIsLoading(false);
-      }
+    async function loadOnMount() {
+      await loadSnapshot();
     }
-    void load();
-  }, [refreshData]);
+    void loadOnMount();
+  }, [loadSnapshot]);
+
+  const reload = useCallback(async () => {
+    setIsLoading(true);
+    await loadSnapshot();
+  }, [loadSnapshot]);
 
   const addTransaction = useCallback(async (transaction: NewTransaction) => {
-    const now = new Date().toISOString();
-    // The title stores the category name at save time, so custom names show in lists and CSV exports.
-    const category = categoryFor(transaction.category, customCategories);
-    const targetAccountId = transaction.accountId || 'cash';
-    const record: Transaction = {
-      id: `txn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      accountId: targetAccountId,
-      type: transaction.type,
-      amountMillimes: transaction.amountMillimes,
-      category: transaction.category,
-      title: transaction.type === 'income' && transaction.category === 'salary' ? 'Monthly salary' : category.label,
-      note: transaction.note?.trim() || undefined,
-      source: 'manual',
-      occurredAt: transaction.occurredAt,
-    };
-
-    await db.runAsync(
-      `INSERT INTO transactions (id, account_id, type, amount_millimes, category, title, note, occurred_at, source, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      record.id, record.accountId, record.type, record.amountMillimes, record.category, record.title,
-      record.note ?? null, record.occurredAt, 'manual', 'confirmed', now, now,
-    );
-    setTransactions((current) => [record, ...current].sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime()));
-  }, [customCategories, db]);
+    const saved = await apiRequest<Transaction>('/api/transactions', { method: 'POST', body: transaction });
+    setTransactions((current) => [saved, ...current].sort(byNewestFirst));
+  }, []);
 
   const addTransfer = useCallback(async (transfer: NewTransfer) => {
-    const fromAccount = accounts.find((a) => a.id === transfer.fromAccountId) ?? accountConfigFor(transfer.fromAccountId);
-    const toAccount = accounts.find((a) => a.id === transfer.toAccountId) ?? accountConfigFor(transfer.toAccountId);
-    const groupId = `trf_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const now = new Date().toISOString();
-
-    const outRecord: Transaction = {
-      id: `txn_${Date.now()}_out_${Math.random().toString(36).slice(2, 6)}`,
-      accountId: transfer.fromAccountId,
-      type: 'transfer',
-      amountMillimes: transfer.amountMillimes,
-      category: 'other',
-      title: `Transfer to ${toAccount.name}`,
-      note: transfer.note?.trim() || undefined,
-      source: 'transfer_out',
-      transferGroupId: groupId,
-      occurredAt: transfer.occurredAt,
-    };
-
-    const inRecord: Transaction = {
-      id: `txn_${Date.now()}_in_${Math.random().toString(36).slice(2, 6)}`,
-      accountId: transfer.toAccountId,
-      type: 'transfer',
-      amountMillimes: transfer.amountMillimes,
-      category: 'other',
-      title: `Transfer from ${fromAccount.name}`,
-      note: transfer.note?.trim() || undefined,
-      source: 'transfer_in',
-      transferGroupId: groupId,
-      occurredAt: transfer.occurredAt,
-    };
-
-    await db.withTransactionAsync(async () => {
-      await db.runAsync(
-        `INSERT INTO transactions (id, account_id, type, amount_millimes, category, title, note, transfer_group_id, occurred_at, source, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        outRecord.id, outRecord.accountId, 'transfer', outRecord.amountMillimes, 'other', outRecord.title,
-        outRecord.note ?? null, groupId, outRecord.occurredAt, 'transfer_out', 'confirmed', now, now,
-      );
-      await db.runAsync(
-        `INSERT INTO transactions (id, account_id, type, amount_millimes, category, title, note, transfer_group_id, occurred_at, source, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        inRecord.id, inRecord.accountId, 'transfer', inRecord.amountMillimes, 'other', inRecord.title,
-        inRecord.note ?? null, groupId, inRecord.occurredAt, 'transfer_in', 'confirmed', now, now,
-      );
-    });
-
-    setTransactions((current) => [outRecord, inRecord, ...current].sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime()));
-  }, [accounts, db]);
+    const saved = await apiRequest<Transaction[]>('/api/transfers', { method: 'POST', body: transfer });
+    setTransactions((current) => [...saved, ...current].sort(byNewestFirst));
+  }, []);
 
   const updateTransaction = useCallback(async (id: string, transaction: NewTransaction) => {
-    const category = categoryFor(transaction.category, customCategories);
-    const title = transaction.type === 'income' && transaction.category === 'salary' ? 'Monthly salary' : category.label;
-    const updatedAt = new Date().toISOString();
-    const targetAccountId = transaction.accountId || 'cash';
-
-    const result = await db.runAsync(
-      `UPDATE transactions
-       SET account_id = ?, type = ?, amount_millimes = ?, category = ?, title = ?, note = ?, occurred_at = ?, updated_at = ?
-       WHERE id = ? AND status = 'confirmed'`,
-      targetAccountId, transaction.type, transaction.amountMillimes, transaction.category, title, transaction.note?.trim() || null,
-      transaction.occurredAt, updatedAt, id,
-    );
-    if (result.changes !== 1) throw new Error('This transaction could not be updated.');
-
-    setTransactions((current) =>
-      current
-        .map((record) =>
-          record.id === id
-            ? {
-                ...record,
-                accountId: targetAccountId,
-                type: transaction.type,
-                amountMillimes: transaction.amountMillimes,
-                category: transaction.category,
-                title,
-                note: transaction.note?.trim() || undefined,
-                occurredAt: transaction.occurredAt,
-              }
-            : record,
-        )
-        .sort((first, second) => new Date(second.occurredAt).getTime() - new Date(first.occurredAt).getTime()),
-    );
-  }, [customCategories, db]);
+    const saved = await apiRequest<Transaction>(`/api/transactions/${encodeURIComponent(id)}`, { method: 'PUT', body: transaction });
+    setTransactions((current) => current.map((record) => (record.id === id ? saved : record)).sort(byNewestFirst));
+  }, []);
 
   const deleteTransaction = useCallback(async (id: string) => {
-    const target = transactions.find((t) => t.id === id);
-    if (!target) return;
-
-    const updatedAt = new Date().toISOString();
-    if (target.transferGroupId) {
-      await db.runAsync(
-        "UPDATE transactions SET status = 'voided', updated_at = ? WHERE transfer_group_id = ? AND status = 'confirmed'",
-        updatedAt, target.transferGroupId,
-      );
-      setTransactions((current) => current.filter((record) => record.transferGroupId !== target.transferGroupId));
-    } else {
-      const result = await db.runAsync("UPDATE transactions SET status = 'voided', updated_at = ? WHERE id = ? AND status = 'confirmed'", updatedAt, id);
-      if (result.changes !== 1) throw new Error('This transaction could not be deleted.');
-      setTransactions((current) => current.filter((record) => record.id !== id));
-    }
-  }, [db, transactions]);
+    const { voidedIds } = await apiRequest<{ voidedIds: string[] }>(`/api/transactions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const removed = new Set(voidedIds);
+    setTransactions((current) => current.filter((record) => !removed.has(record.id)));
+  }, []);
 
   const saveSalaryRule = useCallback(async (input: SalaryRuleInput) => {
-    const now = new Date().toISOString();
-    const existingSalaryRule = recurringRules.find((r) => r.type === 'income');
-
-    if (existingSalaryRule) {
-      await db.runAsync(
-        `UPDATE recurring_rules
-         SET amount_millimes = ?, account_id = ?, day_of_month = ?, description = ?, is_active = ?, updated_at = ?
-         WHERE id = ?`,
-        input.amountMillimes, input.accountId, input.dayOfMonth, input.description || 'Monthly salary',
-        input.isActive !== false ? 1 : 0, now, existingSalaryRule.id,
-      );
-
-      setRecurringRules((current) =>
-        current.map((r) =>
-          r.id === existingSalaryRule.id
-            ? {
-                ...r,
-                amountMillimes: input.amountMillimes,
-                accountId: input.accountId,
-                dayOfMonth: input.dayOfMonth,
-                description: input.description || 'Monthly salary',
-                isActive: input.isActive !== false,
-                updatedAt: now,
-              }
-            : r,
-        ),
-      );
-    } else {
-      const newRule: RecurringRule = {
-        id: `rec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        type: 'income',
-        amountMillimes: input.amountMillimes,
-        accountId: input.accountId,
-        dayOfMonth: input.dayOfMonth,
-        description: input.description || 'Monthly salary',
-        isActive: input.isActive !== false,
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      await db.runAsync(
-        `INSERT INTO recurring_rules (id, type, amount_millimes, account_id, day_of_month, description, is_active, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        newRule.id, 'income', newRule.amountMillimes, newRule.accountId, newRule.dayOfMonth, newRule.description,
-        newRule.isActive ? 1 : 0, now, now,
-      );
-
-      setRecurringRules((current) => [...current, newRule]);
-    }
-  }, [db, recurringRules]);
+    const saved = await apiRequest<RecurringRule>('/api/salary-rule', { method: 'PUT', body: input });
+    setRecurringRules((current) => (current.some((rule) => rule.id === saved.id)
+      ? current.map((rule) => (rule.id === saved.id ? saved : rule))
+      : [...current, saved]));
+  }, []);
 
   const deleteSalaryRule = useCallback(async (id: string) => {
-    await db.runAsync('DELETE FROM recurring_rules WHERE id = ?', id);
-    setRecurringRules((current) => current.filter((r) => r.id !== id));
-  }, [db]);
+    await apiRequest(`/api/recurring-rules/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    setRecurringRules((current) => current.filter((rule) => rule.id !== id));
+  }, []);
 
   const confirmSalaryPayment = useCallback(async (salaryRuleToConfirm: RecurringRule, confirmedDate = new Date()) => {
-    const now = new Date().toISOString();
-    const record: Transaction = {
-      id: `txn_${Date.now()}_sal_${Math.random().toString(36).slice(2, 6)}`,
-      accountId: salaryRuleToConfirm.accountId,
-      type: 'income',
-      amountMillimes: salaryRuleToConfirm.amountMillimes,
-      category: 'salary',
-      title: salaryRuleToConfirm.description || 'Monthly salary',
-      note: 'Confirmed recurring salary',
-      source: 'recurring',
-      occurredAt: confirmedDate.toISOString(),
-    };
-
-    await db.runAsync(
-      `INSERT INTO transactions (id, account_id, type, amount_millimes, category, title, note, occurred_at, source, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      record.id, record.accountId, record.type, record.amountMillimes, record.category, record.title,
-      record.note ?? null, record.occurredAt, 'recurring', 'confirmed', now, now,
-    );
-
-    setTransactions((current) => [record, ...current].sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime()));
-  }, [db]);
+    const saved = await apiRequest<Transaction>('/api/salary-rule/confirm', {
+      method: 'POST',
+      body: { ruleId: salaryRuleToConfirm.id, occurredAt: confirmedDate.toISOString() },
+    });
+    setTransactions((current) => [saved, ...current].sort(byNewestFirst));
+  }, []);
 
   const setCategoryBudget = useCallback(async (category: TransactionCategory, amountMillimes: number, monthKey?: string) => {
-    const now = new Date().toISOString();
-    const existing = categoryBudgets.find((b) => b.category === category && b.monthKey === monthKey);
-
-    if (amountMillimes <= 0) {
-      if (existing) {
-        await db.runAsync('DELETE FROM category_budgets WHERE id = ?', existing.id);
-        setCategoryBudgets((current) => current.filter((b) => b.id !== existing.id));
-      }
-      return;
-    }
-
-    if (existing) {
-      await db.runAsync(
-        'UPDATE category_budgets SET amount_millimes = ?, updated_at = ? WHERE id = ?',
-        amountMillimes, now, existing.id,
-      );
-      setCategoryBudgets((current) =>
-        current.map((b) => (b.id === existing.id ? { ...b, amountMillimes, updatedAt: now } : b)),
-      );
-    } else {
-      const newBudget: CategoryBudget = {
-        id: `bud_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        category,
-        amountMillimes,
-        monthKey,
-        createdAt: now,
-        updatedAt: now,
-      };
-      await db.runAsync(
-        'INSERT INTO category_budgets (id, category, amount_millimes, month_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-        newBudget.id, newBudget.category, newBudget.amountMillimes, newBudget.monthKey ?? null, now, now,
-      );
-      setCategoryBudgets((current) => [...current, newBudget]);
-    }
-  }, [categoryBudgets, db]);
+    const { budget, deletedId } = await apiRequest<{ budget: CategoryBudget | null; deletedId?: string }>('/api/category-budgets', {
+      method: 'PUT',
+      body: { category, amountMillimes: Math.max(0, amountMillimes), monthKey: monthKey ?? null },
+    });
+    setCategoryBudgets((current) => {
+      const withoutDeleted = deletedId ? current.filter((item) => item.id !== deletedId) : current;
+      if (!budget) return withoutDeleted;
+      return withoutDeleted.some((item) => item.id === budget.id)
+        ? withoutDeleted.map((item) => (item.id === budget.id ? budget : item))
+        : [...withoutDeleted, budget];
+    });
+  }, []);
 
   const deleteCategoryBudget = useCallback(async (id: string) => {
-    await db.runAsync('DELETE FROM category_budgets WHERE id = ?', id);
-    setCategoryBudgets((current) => current.filter((b) => b.id !== id));
-  }, [db]);
+    await apiRequest(`/api/category-budgets/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    setCategoryBudgets((current) => current.filter((budget) => budget.id !== id));
+  }, []);
 
   const addCustomCategory = useCallback(async (input: NewCustomCategory) => {
-    // Collapse repeated spaces so "My  Gym " and "My Gym" are treated as the same name.
-    const name = input.name.trim().replace(/\s+/g, ' ');
-    if (!name) throw new Error('Enter a category name.');
-    if (name.length > MAX_CATEGORY_NAME_LENGTH) {
-      throw new Error(`Keep the name under ${MAX_CATEGORY_NAME_LENGTH} characters.`);
-    }
-
-    // Reuse an existing category instead of creating a duplicate (case-insensitive).
-    const existing = customCategories.find(
-      (category) => category.kind === input.kind && category.name.toLowerCase() === name.toLowerCase(),
-    );
-    if (existing) return existing;
-
-    const now = new Date().toISOString();
-    const created: CustomCategory = {
-      id: `custom_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      name,
-      emoji: input.emoji || customCategoryEmojis[0],
-      kind: input.kind,
-      createdAt: now,
-    };
-
-    await db.runAsync(
-      'INSERT INTO custom_categories (id, name, emoji, kind, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-      created.id, created.name, created.emoji, created.kind, now, now,
-    );
-    setCustomCategories((current) => [...current, created]);
-    return created;
-  }, [customCategories, db]);
+    const saved = await apiRequest<CustomCategory>('/api/custom-categories', { method: 'POST', body: input });
+    setCustomCategories((current) => (current.some((category) => category.id === saved.id) ? current : [...current, saved]));
+    return saved;
+  }, []);
 
   const updateAccountOpeningBalance = useCallback(async (accountId: string, openingBalanceMillimes: number) => {
-    const now = new Date().toISOString();
-    await db.runAsync(
-      'UPDATE accounts SET opening_balance_millimes = ?, updated_at = ? WHERE id = ?',
-      openingBalanceMillimes, now, accountId,
-    );
-    setAccounts((current) =>
-      current.map((acc) => (acc.id === accountId ? { ...acc, openingBalanceMillimes } : acc)),
-    );
-  }, [db]);
+    const saved = await apiRequest<Account>(`/api/accounts/${encodeURIComponent(accountId)}`, {
+      method: 'PATCH',
+      body: { openingBalanceMillimes },
+    });
+    setAccounts((current) => current.map((account) => (account.id === accountId ? saved : account)));
+  }, []);
+
+  const downloadCloudBackup = useCallback(async () => {
+    await saveBackupFile(await apiRequest<BackupFile>('/api/backup'), 'cloud');
+  }, []);
+
+  const importBackup = useCallback(async (backup: BackupFile) => {
+    const summary = await apiRequest<ImportSummary>('/api/backup/import', { method: 'POST', body: backup });
+    await reload();
+    return summary;
+  }, [reload]);
 
   const salaryRule = useMemo(() => {
     return recurringRules.find((r) => r.type === 'income' && r.isActive);
@@ -546,6 +217,8 @@ export function TransactionProvider({ children }: PropsWithChildren) {
       monthIncomeMillimes: currentMonthTransactions.filter((transaction) => transaction.type === 'income').reduce((total, transaction) => total + transaction.amountMillimes, 0),
       monthExpenseMillimes: currentMonthTransactions.filter((transaction) => transaction.type === 'expense').reduce((total, transaction) => total + transaction.amountMillimes, 0),
       isLoading,
+      loadError,
+      reload,
       addTransaction,
       addTransfer,
       updateTransaction,
@@ -558,11 +231,10 @@ export function TransactionProvider({ children }: PropsWithChildren) {
       addCustomCategory,
       updateAccountOpeningBalance,
       exportCsv: () => exportTransactionsCsv(transactions, customCategories),
-      backupData: async () => createBackup(await getBackupSnapshot(db)),
+      downloadCloudBackup,
+      importBackup,
     };
-  }, [accounts, addCustomCategory, addTransaction, addTransfer, categoryBudgets, customCategories, confirmSalaryPayment, db, deleteCategoryBudget, deleteSalaryRule, deleteTransaction, isLoading, recurringRules, salaryRule, saveSalaryRule, setCategoryBudget, transactions, updateAccountOpeningBalance, updateTransaction]);
-
-
+  }, [accounts, addCustomCategory, addTransaction, addTransfer, categoryBudgets, confirmSalaryPayment, customCategories, deleteCategoryBudget, deleteSalaryRule, deleteTransaction, downloadCloudBackup, importBackup, isLoading, loadError, recurringRules, reload, salaryRule, saveSalaryRule, setCategoryBudget, transactions, updateAccountOpeningBalance, updateTransaction]);
 
   return <TransactionContext.Provider value={value}>{children}</TransactionContext.Provider>;
 }
@@ -578,5 +250,3 @@ export function useCategoryFor() {
   const { customCategories } = useTransactions();
   return useCallback((id: TransactionCategory) => categoryFor(id, customCategories), [customCategories]);
 }
-
-
