@@ -11,12 +11,15 @@ type DailySpendingHistogramProps = {
   transactions: Transaction[];
   safeDailyRateMillimes: number;
   referenceDate?: Date;
+  /** Highlights today's bar. Turn it off when showing a past month. */
+  showToday?: boolean;
 };
 
 export function DailySpendingHistogram({
   transactions,
   safeDailyRateMillimes,
   referenceDate = new Date(),
+  showToday = true,
 }: DailySpendingHistogramProps) {
   const year = referenceDate.getFullYear();
   const month = referenceDate.getMonth();
@@ -59,7 +62,7 @@ export function DailySpendingHistogram({
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.barsContainer}>
         {Array.from({ length: totalDaysInMonth }, (_, i) => i + 1).map((day) => {
           const spend = dailyExpenses[day] ?? 0;
-          const isToday = day === currentDay;
+          const isToday = showToday && day === currentDay;
           const isFuture = day > currentDay;
           const isExceeded = safeDailyRateMillimes > 0 && spend > safeDailyRateMillimes;
           const barHeight = spend > 0 ? Math.max(6, Math.round((spend / maxDaySpend) * chartHeight)) : 2;
@@ -112,14 +115,18 @@ export function DailySpendingHistogram({
           <View style={[styles.dot, { backgroundColor: colors.primary }]} />
           <Text variant="caption">Normal spend</Text>
         </View>
-        <View style={styles.legendRow}>
-          <View style={[styles.dot, { backgroundColor: colors.expense }]} />
-          <Text variant="caption">Over safe pace</Text>
-        </View>
-        <View style={styles.legendRow}>
-          <View style={[styles.dot, { backgroundColor: colors.primaryDark }]} />
-          <Text variant="caption">Today</Text>
-        </View>
+        {safeDailyRateMillimes > 0 && (
+          <View style={styles.legendRow}>
+            <View style={[styles.dot, { backgroundColor: colors.expense }]} />
+            <Text variant="caption">Over safe pace</Text>
+          </View>
+        )}
+        {showToday && (
+          <View style={styles.legendRow}>
+            <View style={[styles.dot, { backgroundColor: colors.primaryDark }]} />
+            <Text variant="caption">Today</Text>
+          </View>
+        )}
       </View>
     </Card>
   );
