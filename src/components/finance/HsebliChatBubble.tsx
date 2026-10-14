@@ -1,4 +1,4 @@
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { Bot, User } from 'lucide-react-native';
 import { Card } from '@/components/ui/Card';
 import { Text } from '@/components/ui/Text';
@@ -16,9 +16,14 @@ export type ChatMessage = {
 
 type HsebliChatBubbleProps = {
   message: ChatMessage;
+  /** When set, suggested follow-up questions are shown as tappable chips. */
+  onAsk?: (question: string) => void;
 };
 
-export function HsebliChatBubble({ message }: HsebliChatBubbleProps) {
+const bulletColors = { good: colors.income, warning: colors.accent, info: colors.primary } as const;
+const bulletIcons = { good: '✓', warning: '!', info: '•' } as const;
+
+export function HsebliChatBubble({ message, onAsk }: HsebliChatBubbleProps) {
   const isUser = message.sender === 'user';
 
   if (isUser) {
@@ -66,10 +71,27 @@ export function HsebliChatBubble({ message }: HsebliChatBubbleProps) {
             </Card>
           )}
 
+          {/* Insight bullets */}
+          {response?.bullets && response.bullets.length > 0 && (
+            <View style={styles.bullets}>
+              {response.bullets.map((bullet, idx) => (
+                <View key={idx} style={styles.bulletRow}>
+                  <View style={[styles.bulletIcon, { backgroundColor: bulletColors[bullet.tone] }]}>
+                    <Text style={styles.bulletIconText}>{bulletIcons[bullet.tone]}</Text>
+                  </View>
+                  <Text style={styles.bulletText}>{bullet.text}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {/* Mini bar chart (trends, weekdays, months) */}
+          {response?.bars && response.bars.length > 0 && <MiniBars bars={response.bars} />}
+
           {/* Embedded Category Breakdown */}
           {response?.categories && response.categories.length > 0 && (
             <View style={styles.categoriesSection}>
-              {response.categories.slice(0, 4).map((cat) => (
+              {response.categories.slice(0, 6).map((cat) => (
                 <View key={cat.category} style={styles.categoryRow}>
                   <Text style={styles.categoryEmoji}>{cat.emoji}</Text>
                   <View style={styles.categoryNameCol}>
@@ -82,7 +104,43 @@ export function HsebliChatBubble({ message }: HsebliChatBubbleProps) {
             </View>
           )}
         </View>
+
+        {onAsk && response?.suggestedQuestions && response.suggestedQuestions.length > 0 && (
+          <View style={styles.suggestions}>
+            {response.suggestedQuestions.map((question) => (
+              <Pressable
+                key={question}
+                accessibilityRole="button"
+                accessibilityLabel={`Ask: ${question}`}
+                onPress={() => onAsk(question)}
+                style={({ pressed }) => [styles.suggestion, pressed && styles.suggestionPressed]}
+              >
+                <Text style={styles.suggestionText}>{question}</Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
       </View>
+    </View>
+  );
+}
+
+function MiniBars({ bars }: { bars: NonNullable<HsebliResponse['bars']> }) {
+  const max = Math.max(1, ...bars.map((bar) => Math.abs(bar.valueMillimes)));
+  return (
+    <View style={styles.miniBars}>
+      {bars.map((bar, idx) => {
+        const height = bar.valueMillimes === 0 ? 2 : Math.max(4, Math.round((Math.abs(bar.valueMillimes) / max) * 60));
+        const color = bar.tone === 'income' ? colors.income : bar.tone === 'expense' ? colors.expense : colors.primary;
+        return (
+          <View key={`${bar.label}_${idx}`} style={styles.miniBarCol} accessibilityLabel={`${bar.label}: ${formatMoney(bar.valueMillimes)}`}>
+            <View style={styles.miniBarArea}>
+              <View style={[styles.miniBar, { height, backgroundColor: bar.valueMillimes === 0 ? colors.border : color }]} />
+            </View>
+            <Text style={styles.miniBarLabel}>{bar.label}</Text>
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -191,6 +249,86 @@ const styles = StyleSheet.create({
   factValueHighlight: {
     color: colors.primaryDark,
     fontWeight: '800',
+  },
+  bullets: {
+    gap: 8,
+    marginTop: 2,
+  },
+  bulletRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  bulletIcon: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  bulletIconText: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: colors.white,
+  },
+  bulletText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.text,
+  },
+  miniBars: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: 3,
+    marginTop: 4,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  miniBarCol: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 3,
+  },
+  miniBarArea: {
+    height: 60,
+    justifyContent: 'flex-end',
+  },
+  miniBar: {
+    width: 8,
+    borderRadius: radius.pill,
+  },
+  miniBarLabel: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: colors.textMuted,
+  },
+  suggestions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 8,
+  },
+  suggestion: {
+    minHeight: 32,
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    backgroundColor: colors.surface,
+  },
+  suggestionPressed: {
+    backgroundColor: colors.primarySoft,
+  },
+  suggestionText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.primaryDark,
   },
   categoriesSection: {
     gap: 6,

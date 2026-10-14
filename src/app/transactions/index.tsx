@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Download, HardDriveUpload, Search, X } from 'lucide-react-native';
 import { Screen } from '@/components/layout/Screen';
 import { CategoryChip } from '@/components/finance/CategoryChip';
+import { PeriodNavigator } from '@/components/finance/PeriodNavigator';
 import { TransactionItem } from '@/components/finance/TransactionItem';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -12,34 +13,57 @@ import { allCategoryOptions } from '@/constants/categories';
 import { formatTransactionDate } from '@/lib/format-date';
 import { useTransactions } from '@/features/transactions/transaction-store';
 import { colors, radius } from '@/constants/colors';
-import { getLocalMonthKey, formatMonthYear } from '@/lib/date';
+import { formatMonthKey, getLocalMonthKey, isValidMonthKey, shiftMonthKey } from '@/lib/date';
+import { getAvailableYears, getEarliestMonthKey } from '@/lib/period-analytics';
 import { formatMoney } from '@/lib/format-money';
 import { EmptyState } from '@/components/ui/EmptyState';
 import type { TransactionCategory } from '@/types/transaction';
 
-type PeriodFilter = 'this_month' | 'last_month' | 'all';
+type PeriodMode = 'month' | 'year' | 'all';
 type TypeFilter = 'all' | 'expense' | 'income' | 'transfer';
 
 export default function TransactionsScreen() {
   const router = useRouter();
   const { transactions, customCategories, exportCsv, backupData, isLoading } = useTransactions();
+  // Optional deep-link params, e.g. from the home screen ("month=2026-09") or the yearly report ("year=2025").
+  const params = useLocalSearchParams<{ month?: string; year?: string }>();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<TransactionCategory | 'all'>('all');
-  const [selectedPeriod, setSelectedPeriod] = useState<PeriodFilter>('this_month');
   const [selectedType, setSelectedType] = useState<TypeFilter>('all');
 
   const today = new Date();
   const currentMonthKey = getLocalMonthKey(today);
-  const lastMonthDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-  const prevMonthKey = getLocalMonthKey(lastMonthDate);
+  const currentYear = today.getFullYear();
+  const [periodMode, setPeriodMode] = useState<PeriodMode>('month');
+  const [selectedMonthKey, setSelectedMonthKey] = useState(currentMonthKey);
+  const [selectedYear, setSelectedYear] = useState(currentYear);
+
+  const earliestMonthKey = useMemo(() => getEarliestMonthKey(transactions), [transactions]);
+  const availableYears = useMemo(() => getAvailableYears(transactions), [transactions]);
+  const oldestYear = availableYears[availableYears.length - 1] ?? currentYear;
+
+  // Apply deep-link params whenever they change (state is adjusted during render, as React recommends).
+  const paramsKey = `${params.month ?? ''}|${params.year ?? ''}`;
+  const [appliedParamsKey, setAppliedParamsKey] = useState('');
+  if (paramsKey !== appliedParamsKey) {
+    setAppliedParamsKey(paramsKey);
+    if (isValidMonthKey(params.month)) {
+      setPeriodMode('month');
+      setSelectedMonthKey(params.month);
+    } else if (params.year && /^\d{4}$/.test(params.year)) {
+      setPeriodMode('year');
+      setSelectedYear(Number(params.year));
+    }
+  }
 
   const filteredTransactions = transactions.filter((transaction) => {
     // Period filter
-    if (selectedPeriod === 'this_month') {
-      if (getLocalMonthKey(new Date(transaction.occurredAt)) !== currentMonthKey) return false;
-    } else if (selectedPeriod === 'last_month') {
-      if (getLocalMonthKey(new Date(transaction.occurredAt)) !== prevMonthKey) return false;
+    const occurredAt = new Date(transaction.occurredAt);
+    if (periodMode === 'month') {
+      if (getLocalMonthKey(occurredAt) !== selectedMonthKey) return false;
+    } else if (periodMode === 'year') {
+      if (occurredAt.getFullYear() !== selectedYear) return false;
     }
 
     // Type filter
@@ -80,14 +104,24 @@ export default function TransactionsScreen() {
     .reduce((sum, t) => sum + t.amountMillimes, 0);
 
 
-  const isFilterActive = searchQuery.trim() !== '' || selectedCategory !== 'all' || selectedPeriod !== 'this_month' || selectedType !== 'all';
+  const isFilterActive =
+    searchQuery.trim() !== '' ||
+    selectedCategory !== 'all' ||
+    periodMode !== 'month' ||
+    selectedMonthKey !== currentMonthKey ||
+    selectedType !== 'all';
 
   const resetFilters = () => {
     setSearchQuery('');
     setSelectedCategory('all');
-    setSelectedPeriod('this_month');
+    setPeriodMode('month');
+    setSelectedMonthKey(currentMonthKey);
+    setSelectedYear(currentYear);
     setSelectedType('all');
   };
+
+  const periodLabel =
+    periodMode === 'month' ? formatMonthKey(selectedMonthKey) : periodMode === 'year' ? String(selectedYear) : 'All recorded time';
 
   const share = async (action: () => Promise<void>) => {
     try {
@@ -102,13 +136,7 @@ export default function TransactionsScreen() {
       <View style={styles.header}>
         <View>
           <Text variant="title">Transactions</Text>
-          <Text variant="caption">
-            {selectedPeriod === 'this_month'
-              ? formatMonthYear(today)
-              : selectedPeriod === 'last_month'
-              ? formatMonthYear(lastMonthDate)
-              : 'All recorded time'}
-          </Text>
+          <Text variant="caption">{periodLabel}</Text>
         </View>
         <View style={styles.headerActions}>
           <ExportAction label="CSV" Icon={Download} onPress={() => void share(exportCsv)} />
@@ -136,10 +164,35 @@ export default function TransactionsScreen() {
 
       {/* Period Filter Tabs */}
       <View style={styles.periodTabs}>
-        <FilterTab label="This month" active={selectedPeriod === 'this_month'} onPress={() => setSelectedPeriod('this_month')} />
-        <FilterTab label="Last month" active={selectedPeriod === 'last_month'} onPress={() => setSelectedPeriod('last_month')} />
-        <FilterTab label="All time" active={selectedPeriod === 'all'} onPress={() => setSelectedPeriod('all')} />
+        <FilterTab label="Month" active={periodMode === 'month'} onPress={() => setPeriodMode('month')} />
+        <FilterTab label="Year" active={periodMode === 'year'} onPress={() => setPeriodMode('year')} />
+        <FilterTab label="All time" active={periodMode === 'all'} onPress={() => setPeriodMode('all')} />
       </View>
+
+      {periodMode === 'month' && (
+        <PeriodNavigator
+          label={periodLabel}
+          unit="month"
+          canGoBack={selectedMonthKey > earliestMonthKey}
+          canGoForward={selectedMonthKey < currentMonthKey}
+          onBack={() => setSelectedMonthKey((key) => shiftMonthKey(key, -1))}
+          onForward={() => setSelectedMonthKey((key) => shiftMonthKey(key, 1))}
+          resetLabel={selectedMonthKey === currentMonthKey ? undefined : 'Back to this month'}
+          onReset={() => setSelectedMonthKey(currentMonthKey)}
+        />
+      )}
+      {periodMode === 'year' && (
+        <PeriodNavigator
+          label={periodLabel}
+          unit="year"
+          canGoBack={selectedYear > oldestYear}
+          canGoForward={selectedYear < currentYear}
+          onBack={() => setSelectedYear((year) => year - 1)}
+          onForward={() => setSelectedYear((year) => year + 1)}
+          resetLabel={selectedYear === currentYear ? undefined : 'Back to this year'}
+          onReset={() => setSelectedYear(currentYear)}
+        />
+      )}
 
       {/* Type Filter Tabs */}
       <View style={styles.typeTabs}>
@@ -244,7 +297,7 @@ function ExportAction({ label, Icon, onPress }: { label: string; Icon: typeof Do
 
 function FilterTab({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   return (
-    <Pressable accessibilityRole="button" onPress={onPress} style={[styles.filterTab, active && styles.filterTabActive]}>
+    <Pressable accessibilityRole="button" accessibilityState={{ selected: active }} onPress={onPress} style={[styles.filterTab, active && styles.filterTabActive]}>
       <Text style={[styles.filterTabText, active && styles.filterTabTextActive]}>{label}</Text>
     </Pressable>
   );

@@ -1,4 +1,4 @@
-import { useCallback, useState, useRef } from 'react';
+import { useCallback, useMemo, useState, useRef } from 'react';
 import { Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { Bot, Plus, Send, ShieldCheck, Sparkles, Target } from 'lucide-react-native';
 import { Screen } from '@/components/layout/Screen';
@@ -13,16 +13,20 @@ import { formatMoney } from '@/lib/format-money';
 import { parseTndToMillimes } from '@/lib/parse-money';
 import { useTransactions } from '@/features/transactions/transaction-store';
 import { extractFinancialFacts } from '@/lib/financial-facts';
-import { processHsebliQuery } from '@/lib/hsebli-engine';
+import { buildWelcomeResponse, processHsebliQuery, type HsebliMemory } from '@/lib/hsebli-engine';
 import type { TransactionCategory } from '@/types/transaction';
 
 const quickPrompts = [
+  { label: '🧠 Analyse my month', query: 'Analyse my month' },
   { label: '📊 Where did my money go?', query: 'Where did my money go this month?' },
-  { label: '⚡ Can I spend 50 TND today?', query: 'Can I spend 50 TND today?' },
-  { label: '🍔 Food & Dining spend', query: 'How much did I spend on food this month?' },
   { label: '📈 Compare to last month', query: 'Compare my spending to last month' },
-  { label: '💳 Account balances', query: 'What are my account balances?' },
-  { label: '☕ Café & snacks', query: 'How much did I spend on coffee and snacks?' },
+  { label: '🗓️ This year', query: 'Summary of this year' },
+  { label: '📉 6-month trend', query: 'Show my spending trend for the last 6 months' },
+  { label: '🔮 Month forecast', query: 'Will I finish the month in the green?' },
+  { label: '⚡ Can I spend 50 TND?', query: 'Can I spend 50 TND today?' },
+  { label: '🔁 Subscriptions', query: 'Do I have recurring expenses?' },
+  { label: '🎯 Save 1000 TND', query: 'How long to save 1000 TND?' },
+  { label: '❓ What can you ask?', query: 'What can you do?' },
 ];
 
 export default function AssistantScreen() {
@@ -43,6 +47,12 @@ export default function AssistantScreen() {
   const [isSettingBudget, setIsSettingBudget] = useState(false);
 
   const flatListRef = useRef<FlatList>(null);
+  // Context of the last answer, so follow-ups like "and last month?" work.
+  const memoryRef = useRef<HsebliMemory | undefined>(undefined);
+  const hsebliData = useMemo(
+    () => ({ transactions, accounts, accountBalances, salaryRule, categoryBudgets, customCategories }),
+    [accountBalances, accounts, categoryBudgets, customCategories, salaryRule, transactions],
+  );
 
   // Compute live deterministic financial facts
   const facts = extractFinancialFacts(
@@ -55,27 +65,10 @@ export default function AssistantScreen() {
   );
 
   // Initial welcome message
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: 'msg_welcome',
-      sender: 'assistant',
-      text: 'Aslama! I’m Hsebli, your private financial assistant. Ask me anything about your spending, accounts, or safe daily pace in English, French, or Derja.',
-      response: {
-        id: 'resp_welcome',
-        title: 'Hsebli Money Companion',
-        body: 'Aslama! I’m Hsebli, your private financial assistant. Ask me anything about your spending, accounts, or safe daily pace in English, French, or Derja.',
-        factsCard: {
-          title: 'Wallet Status',
-          items: [
-            { label: 'Total Balance', value: formatMoney(facts.totalBalanceMillimes), isHighlight: true },
-            { label: 'Spent This Month', value: formatMoney(facts.thisMonthExpenseMillimes) },
-            { label: 'Daily Safe Pace', value: facts.safeDailySpendRateMillimes > 0 ? `${formatMoney(facts.safeDailySpendRateMillimes)} / day` : 'Configure salary' },
-          ],
-        },
-      },
-      timestamp: 'initial',
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    const welcome = buildWelcomeResponse(hsebliData);
+    return [{ id: 'msg_welcome', sender: 'assistant', text: welcome.body, response: welcome, timestamp: 'initial' }];
+  });
 
   const handleSend = useCallback((textToSend?: string) => {
     const query = (textToSend ?? inputQuery).trim();
@@ -89,7 +82,8 @@ export default function AssistantScreen() {
       timestamp,
     };
 
-    const hsebliResp = processHsebliQuery(query, facts);
+    const hsebliResp = processHsebliQuery(query, hsebliData, memoryRef.current);
+    memoryRef.current = hsebliResp.memory;
     const botMessage: ChatMessage = {
       id: `bot_${Math.random().toString(36).slice(2, 10)}`,
       sender: 'assistant',
@@ -104,7 +98,7 @@ export default function AssistantScreen() {
     setTimeout(() => {
       flatListRef.current?.scrollToEnd({ animated: true });
     }, 100);
-  }, [facts, inputQuery]);
+  }, [hsebliData, inputQuery]);
 
   const handleSaveBudget = useCallback(async () => {
     const millimes = parseTndToMillimes(budgetAmountInput);
@@ -136,7 +130,9 @@ export default function AssistantScreen() {
           ref={flatListRef}
           data={messages}
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <HsebliChatBubble message={item} />}
+          renderItem={({ item, index }) => (
+            <HsebliChatBubble message={item} onAsk={index === messages.length - 1 ? handleSend : undefined} />
+          )}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           ListHeaderComponent={
@@ -153,7 +149,7 @@ export default function AssistantScreen() {
                       <Text style={styles.privateBadgeText}>100% PRIVATE</Text>
                     </View>
                   </View>
-                  <Text variant="caption">Offline grounded financial intelligence</Text>
+                  <Text variant="caption">Analyses any month or year, offline and private</Text>
                 </View>
               </View>
 

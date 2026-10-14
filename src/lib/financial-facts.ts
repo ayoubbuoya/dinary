@@ -1,5 +1,5 @@
-import { categoryFor } from '@/constants/categories';
-import { getLocalMonthKey } from './date';
+import { getLocalMonthKey, shiftMonthKey } from './date';
+import { buildCategoryFacts, type CategoryFact } from './period-analytics';
 import { calculateSafeDailySpend, getDaysUntilPayday } from './salary';
 import type { Account } from '@/types/account';
 import type { CategoryBudget, CategoryBudgetStatus } from '@/types/budget';
@@ -7,14 +7,7 @@ import type { CustomCategory } from '@/types/category';
 import type { RecurringRule } from '@/types/recurring';
 import type { Transaction, TransactionCategory } from '@/types/transaction';
 
-export type CategoryFact = {
-  category: TransactionCategory;
-  label: string;
-  emoji: string;
-  amountMillimes: number;
-  percentage: number;
-  count: number;
-};
+export type { CategoryFact };
 
 export type FinancialFacts = {
   currentMonthKey: string;
@@ -47,12 +40,15 @@ export function extractFinancialFacts(
   categoryBudgets: CategoryBudget[] = [],
   customCategories: CustomCategory[] = [],
   referenceDate = new Date(),
+  /**
+   * The month to analyse (`YYYY-MM`). Defaults to the month of `referenceDate`.
+   * Balances and the safe daily pace always use `referenceDate` (today), because
+   * they describe the money available now, not the money of a past month.
+   */
+  periodMonthKey = getLocalMonthKey(referenceDate),
 ): FinancialFacts {
-  const currentMonthKey = getLocalMonthKey(referenceDate);
-
-  // Previous month calculation
-  const lastMonthDate = new Date(referenceDate.getFullYear(), referenceDate.getMonth() - 1, 1);
-  const lastMonthKey = getLocalMonthKey(lastMonthDate);
+  const currentMonthKey = periodMonthKey;
+  const lastMonthKey = shiftMonthKey(currentMonthKey, -1);
 
   // Balances
   const totalBalanceMillimes = Object.values(accountBalances).reduce((sum, b) => sum + b, 0);
@@ -88,29 +84,10 @@ export function extractFinancialFacts(
   const monthOverMonthExpenseDiffMillimes = thisMonthExpenseMillimes - lastMonthExpenseMillimes;
 
   // Category breakdowns
-  const categoryMap = new Map<TransactionCategory, { amount: number; count: number }>();
-  for (const t of thisMonthExpenses) {
-    const existing = categoryMap.get(t.category) ?? { amount: 0, count: 0 };
-    categoryMap.set(t.category, {
-      amount: existing.amount + t.amountMillimes,
-      count: existing.count + 1,
-    });
-  }
-
-  const sortedCategories: CategoryFact[] = Array.from(categoryMap.entries())
-    .map(([cat, val]) => {
-      const info = categoryFor(cat, customCategories);
-      const percentage = thisMonthExpenseMillimes > 0 ? (val.amount / thisMonthExpenseMillimes) * 100 : 0;
-      return {
-        category: cat,
-        label: info.label,
-        emoji: info.emoji,
-        amountMillimes: val.amount,
-        percentage: Math.round(percentage * 10) / 10,
-        count: val.count,
-      };
-    })
-    .sort((a, b) => b.amountMillimes - a.amountMillimes);
+  const sortedCategories: CategoryFact[] = buildCategoryFacts(thisMonthExpenses, customCategories);
+  const categoryMap = new Map<TransactionCategory, { amount: number; count: number }>(
+    sortedCategories.map((fact) => [fact.category, { amount: fact.amountMillimes, count: fact.count }]),
+  );
 
   const topCategory = sortedCategories[0];
 
